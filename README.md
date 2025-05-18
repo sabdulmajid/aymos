@@ -4,8 +4,9 @@ AymOS is a sophisticated real-time operating system (RTOS) designed for embedded
 
 ## Key Features
 
-### Real-Time Task Management
+-### Real-Time Task Management
 - **Earliest Deadline First (EDF) Scheduling**: Implements a dynamic priority scheduling algorithm that ensures tasks meet their timing requirements
+- **Priority Support**: Tasks have an explicit priority used to break deadline ties and can be changed at runtime
 - **Task States**: Comprehensive task state management (READY, RUNNING, SLEEPING, DORMANT)
 - **Deadline-Based Execution**: Tasks can be created with specific deadlines and time remaining parameters
 - **Context Switching**: Efficient context switching mechanism using ARM's SVC and PendSV exceptions
@@ -75,6 +76,7 @@ osKernelStart();
 - `osSleep(int timeInMs)`: Put current task to sleep
 - `osTaskExit()`: Exit current task
 - `osGetTID()`: Get current task ID
+- `osSetPriority(uint8_t priority, task_t TID)`: Change task priority at runtime
 
 ### Memory Management
 - `k_mem_init()`: Initialize memory management

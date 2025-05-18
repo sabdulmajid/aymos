@@ -19,6 +19,7 @@ typedef struct task_control_block{
     task_t tid;
     U8 state;
     U16 stack_size;
+    U8 priority;
     uint32_t* thread_psp_ptr;
     uint32_t deadline;
     uint32_t time_remaining;
@@ -36,5 +37,6 @@ void osSleep(int timeInMs);
 void osPeriodYield(void);
 int osSetDeadline(int deadline, task_t TID);
 int osCreateDeadlineTask(int deadline, TCB* task);
+int osSetPriority(U8 priority, task_t TID);
 
 #endif /* INC_K_TASK_H_ */
