@@ -190,6 +190,13 @@ int osCreateDeadlineTask(int deadline, TCB* task) {
 
     }
 
+    /*
+     * new_task_id is used during allocation to tag the stack memory with the
+     * correct owner.  Reset it here so subsequent allocations from running
+     * tasks are associated with the current_task_id instead of the last created
+     * task.
+     */
+    new_task_id = TID_NULL;
 
     return RTX_OK;
 }

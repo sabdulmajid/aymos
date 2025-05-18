@@ -86,7 +86,14 @@ void* k_mem_alloc(unsigned int size) {
             }
 
             curr->allocated = 1;
-            curr->owner = new_task_id;
+            /*
+             * When creating a task the kernel sets new_task_id to the task's TID
+             * before calling k_mem_alloc() for its stack.  Once the kernel is
+             * running, dynamic allocations should be owned by the currently
+             * executing task.  Use new_task_id if it is valid, otherwise fall
+             * back to current_task_id.
+             */
+            curr->owner = (new_task_id != TID_NULL) ? new_task_id : current_task_id;
             last_alloc = curr;
             min_alloc_size = (last_alloc) ? ((min_alloc_size < aligned_size) ? min_alloc_size : aligned_size) : aligned_size;
 
