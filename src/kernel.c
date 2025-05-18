@@ -36,12 +36,17 @@ void idle_task(void*arg) {
 // EDF
 int find_earliest_deadline(void) {
     task_t earliest_task = TID_NULL;
-    uint32_t earliest_deadline = 0xFFFFFFFF; // is this correct???
+    uint32_t earliest_deadline = 0xFFFFFFFF;
+    U8 best_priority = 0xFF;
 
     for (int i = 1; i < MAX_TASKS; i++) {
-        if (task_list[i].state == READY && task_list[i].time_remaining < earliest_deadline) {
-            earliest_deadline = task_list[i].time_remaining;
-            earliest_task = i;
+        if (task_list[i].state == READY) {
+            if (task_list[i].time_remaining < earliest_deadline ||
+                (task_list[i].time_remaining == earliest_deadline && task_list[i].priority < best_priority)) {
+                earliest_deadline = task_list[i].time_remaining;
+                best_priority = task_list[i].priority;
+                earliest_task = i;
+            }
         }
     }
 
@@ -73,6 +78,7 @@ void osKernelInit(void) {
     task_list[0].tid = TID_NULL;
     task_list[0].state = RUNNING;
     task_list[0].stack_size = MAIN_STACK_SIZE;
+    task_list[0].priority = 0xFF; // lowest priority for idle task
     // ask maran what to put in here
     task_list[0].deadline = 0xFFFFFFFF; // max val???
     task_list[0].time_remaining = 0xFFFFFFFF; // max val???
@@ -97,6 +103,7 @@ void osKernelInit(void) {
         task_list[i].tid = TID_NULL;
         task_list[i].state = DORMANT;
         task_list[i].stack_size = 0x0;
+        task_list[i].priority = 0;
         task_list[i].deadline = 0;
         task_list[i].time_remaining = 0;
     }
@@ -153,6 +160,7 @@ int osCreateDeadlineTask(int deadline, TCB* task) {
     task_list[new_task_id].tid = new_task_id;
     task_list[new_task_id].state = READY;
     task_list[new_task_id].stack_size = task->stack_size;
+    task_list[new_task_id].priority = task->priority;
     task_list[new_task_id].deadline = deadline;
     task_list[new_task_id].time_remaining = deadline;
 
@@ -166,9 +174,11 @@ int osCreateDeadlineTask(int deadline, TCB* task) {
     task_list[new_task_id].thread_psp_ptr = stack_location_ptr;
     total_tasks++;
 
-    // TODO new task has an earlier deadline than the current task => context switch
+    // Preempt if the new task outranks the current task
     if (running_flag && current_task_id != TID_NULL &&
-        task_list[new_task_id].time_remaining < task_list[current_task_id].time_remaining) {
+        (task_list[new_task_id].time_remaining < task_list[current_task_id].time_remaining ||
+         (task_list[new_task_id].time_remaining == task_list[current_task_id].time_remaining &&
+          task_list[new_task_id].priority < task_list[current_task_id].priority))) {
 
 		next_task_id = new_task_id;
 
@@ -251,7 +261,9 @@ int osSetDeadline(int deadline, task_t TID) {
     task_list[TID].time_remaining = deadline;
 
     if (task_list[TID].state == READY &&
-        task_list[TID].time_remaining < task_list[current_task_id].time_remaining) {
+        (task_list[TID].time_remaining < task_list[current_task_id].time_remaining ||
+         (task_list[TID].time_remaining == task_list[current_task_id].time_remaining &&
+          task_list[TID].priority < task_list[current_task_id].priority))) {
         // set next task to be the one with updated deadline
         next_task_id = TID;
 
@@ -261,6 +273,26 @@ int osSetDeadline(int deadline, task_t TID) {
 		SCB->ICSR |= (0x1 << 28);
 		__asm("isb");
 
+    }
+
+    return RTX_OK;
+}
+
+int osSetPriority(U8 priority, task_t TID) {
+    if (TID < 1 || TID >= MAX_TASKS || task_list[TID].state == DORMANT) {
+        return RTX_ERR;
+    }
+
+    task_list[TID].priority = priority;
+
+    if (task_list[TID].state == READY &&
+        (task_list[TID].time_remaining < task_list[current_task_id].time_remaining ||
+         (task_list[TID].time_remaining == task_list[current_task_id].time_remaining &&
+          task_list[TID].priority < task_list[current_task_id].priority))) {
+        next_task_id = TID;
+        svc_code = 2;
+        SCB->ICSR |= (0x1 << 28);
+        __asm("isb");
     }
 
     return RTX_OK;
@@ -280,6 +312,7 @@ int osTaskInfo(task_t TID, TCB* task_copy) {
     task_copy->stack_high = task_list[TID].stack_high;
     task_copy->state = task_list[TID].state;
     task_copy->stack_size = task_list[TID].stack_size;
+    task_copy->priority = task_list[TID].priority;
     task_copy->deadline = task_list[TID].deadline;
     task_copy->time_remaining = task_list[TID].time_remaining;
 
