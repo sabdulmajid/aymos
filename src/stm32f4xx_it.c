@@ -32,7 +32,7 @@ extern int kernel_running;
 extern task_t current_TID;
 extern task_t next_TID;
 
-extern uint32_t* curr_thread_ptr;
+extern uint32_t* current_thread_ptr;
 extern uint32_t* next_thread_ptr;
 
 extern uint32_t g_system_time;

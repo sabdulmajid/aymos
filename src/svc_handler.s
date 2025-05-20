@@ -30,7 +30,7 @@ handleOSYield:
 	STMDB R0!, {R4-R11}
 	MSR PSP, R0
 	BL updateSP
-	LDR R0, =curr_thread_ptr
+        LDR R0, =current_thread_ptr
 	LDR R1, [R0]
 	LDMIA R1!, {R4-R11}
 	MSR PSP, R1
@@ -39,7 +39,7 @@ handleOSYield:
 .global handleOSStart
 .thumb_func
 handleOSStart:
-	LDR R3, =curr_thread_ptr
+        LDR R3, =current_thread_ptr
 	LDR R2, [R3]
 	LDMIA R2!, {R4-R11}
 	MSR PSP, R2
@@ -50,7 +50,7 @@ handleOSStart:
 .thumb_func
 handleOSExit:
 	BL exitSP
-	LDR R0, =curr_thread_ptr
+        LDR R0, =current_thread_ptr
 	LDR R1, [R0]
 	LDMIA R1!, {R4-R11}
 	MSR PSP, R1
