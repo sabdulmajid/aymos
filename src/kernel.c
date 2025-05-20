@@ -79,9 +79,12 @@ void osKernelInit(void) {
     task_list[0].state = RUNNING;
     task_list[0].stack_size = MAIN_STACK_SIZE;
     task_list[0].priority = 0xFF; // lowest priority for idle task
-    // ask maran what to put in here
-    task_list[0].deadline = 0xFFFFFFFF; // max val???
-    task_list[0].time_remaining = 0xFFFFFFFF; // max val???
+    /* deadline specifies when a task must complete and
+       time_remaining tracks the time left until that deadline.
+       Set both to the maximum value so the idle task never preempts
+       real work and never "expires". */
+    task_list[0].deadline = 0xFFFFFFFF;
+    task_list[0].time_remaining = 0xFFFFFFFF;
 
     current_task_id = TID_NULL;
 
