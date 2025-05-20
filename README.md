@@ -84,3 +84,6 @@ osKernelStart();
 - `k_mem_dealloc(void* ptr)`: Deallocate memory
 - `k_mem_count_extfrag(unsigned int size)`: Count external fragmentation
 
+
+## Further Reading
+See [docs/FUNCTIONALITY_OVERVIEW.md](docs/FUNCTIONALITY_OVERVIEW.md) for a more detailed description of how each module operates.
