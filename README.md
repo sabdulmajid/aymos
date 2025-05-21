@@ -67,22 +67,25 @@ osKernelStart();
 
 ## API Reference
 
+This repository includes a detailed [API reference](docs/API_REFERENCE.md) that
+describes every public function. Below is a short overview of the most commonly
+used calls.
+
 ### Task Management
-- `osKernelInit()`: Initialize the kernel
-- `osKernelStart()`: Start the kernel and begin task execution
-- `osCreateTask(TCB* task)`: Create a new task
-- `osCreateDeadlineTask(int deadline, TCB* task)`: Create a task with specific deadline
-- `osYield()`: Yield CPU to next task
-- `osSleep(int timeInMs)`: Put current task to sleep
-- `osTaskExit()`: Exit current task
-- `osGetTID()`: Get current task ID
-- `osSetPriority(uint8_t priority, task_t TID)`: Change task priority at runtime
+- `osKernelInit()` – initialise the kernel
+- `osKernelStart()` – start executing tasks
+- `osCreateDeadlineTask(int deadline, TCB* task)` – create a task with a specific deadline
+- `osYield()` – yield CPU to the next ready task
+- `osSleep(int timeInMs)` – put the current task to sleep
+- `osTaskExit()` – terminate the current task
+- `osGetTID()` – obtain the current task ID
+- `osSetPriority(uint8_t priority, task_t TID)` – change a task's priority
 
 ### Memory Management
-- `k_mem_init()`: Initialize memory management
-- `k_mem_alloc(unsigned int size)`: Allocate memory
-- `k_mem_dealloc(void* ptr)`: Deallocate memory
-- `k_mem_count_extfrag(unsigned int size)`: Count external fragmentation
+- `k_mem_init()` – initialise memory management
+- `k_mem_alloc(unsigned int size)` – allocate memory
+- `k_mem_dealloc(void* ptr)` – free allocated memory
+- `k_mem_count_extfrag(unsigned int size)` – count external fragmentation
 
 
 ## Further Reading
