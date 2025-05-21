@@ -35,7 +35,7 @@ extern task_t next_TID;
 extern uint32_t* current_thread_ptr;
 extern uint32_t* next_thread_ptr;
 
-extern uint32_t g_system_time;
+extern volatile uint32_t system_time;
 extern unsigned int svc_number;
 
 extern TCB task_list[];
@@ -163,7 +163,7 @@ void SysTick_Handler(void) {
         return;
     }
 
-    g_system_time++;
+    system_time++;
     context_switch_required = 0;
 
     updateTaskTimes();

@@ -11,6 +11,7 @@ The kernel (`src/kernel.c`) is responsible for task management and scheduling. I
 - `osKernelStart` – starts executing tasks.
 - `osYield`, `osSleep`, and `osPeriodYield` – cause context switches through supervisor calls.
 - `osTaskExit` – remove a task and free its resources.
+- `osGetSystemTime` – read the current tick count maintained by the kernel.
 
 Context switching is performed in `src/svc_handler.s` using ARM SVC and PendSV exceptions.
 
@@ -24,6 +25,7 @@ Important API functions:
 - `k_mem_alloc` – allocates aligned memory, splitting blocks when needed.
 - `k_mem_dealloc` – frees a block and merges neighboring free regions.
 - `k_mem_count_extfrag` – counts how many free blocks are too small for a requested size.
+- `k_mem_get_usage` – returns the total number of bytes currently allocated.
 
 ## Startup and HAL
 
@@ -36,6 +38,7 @@ Several small test programs under `src/tests` demonstrate the kernel and memory 
 - `create_task_test.c` – creates tasks and monitors state transitions.
 - `allocation_timing_test.c` – measures memory allocation performance.
 - `periodic_test.c` – exercises periodic task behaviour.
+- `system_time_test.c` – prints the current system time and memory usage.
 
 Running `make` builds the tests using the ARM toolchain specified in the `Makefile`.
 

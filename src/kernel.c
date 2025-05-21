@@ -383,6 +383,10 @@ task_t osGetTID(void) {
     return current_task_id;
 }
 
+uint32_t osGetSystemTime(void) {
+    return system_time;
+}
+
 
 void SVC_Handler_Main(unsigned int *svc_args)
 {

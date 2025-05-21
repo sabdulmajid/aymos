@@ -38,5 +38,6 @@ void osPeriodYield(void);
 int osSetDeadline(int deadline, task_t TID);
 int osCreateDeadlineTask(int deadline, TCB* task);
 int osSetPriority(U8 priority, task_t TID);
+uint32_t osGetSystemTime(void);
 
 #endif /* INC_K_TASK_H_ */

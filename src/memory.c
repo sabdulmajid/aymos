@@ -180,6 +180,22 @@ int k_mem_count_extfrag(unsigned int size) {
     return count;
 }
 
+unsigned int k_mem_get_usage(void) {
+    if (!mem_init_flag) {
+        return 0;
+    }
+
+    unsigned int used = 0;
+    MEM_BLOCK* curr = free_list;
+    while (curr != NULL) {
+        if (curr->allocated) {
+            used += curr->size;
+        }
+        curr = curr->next;
+    }
+    return used;
+}
+
 static uint32_t align_to_word(uint32_t size) {
     return (size + 3) & ~0x03;
 }

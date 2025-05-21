@@ -18,9 +18,11 @@ AymOS is a sophisticated real-time operating system (RTOS) designed for embedded
 - **Memory Protection**: Task-specific memory ownership and access control
 - **Stack Management**: Per-task stack allocation and management
 - **Memory Statistics**: External fragmentation monitoring and reporting
+- **Usage Monitoring**: Query total allocated heap memory at runtime
 
 ### System Features
 - **System Tick Timer**: Precise timing control with configurable system tick
+- **System Time API**: Applications can read the current tick count
 - **Interrupt Handling**: Comprehensive interrupt management system
 - **Task Synchronization**: Built-in mechanisms for task coordination
 - **Error Handling**: Robust error detection and handling mechanisms
@@ -77,12 +79,14 @@ osKernelStart();
 - `osTaskExit()`: Exit current task
 - `osGetTID()`: Get current task ID
 - `osSetPriority(uint8_t priority, task_t TID)`: Change task priority at runtime
+- `osGetSystemTime()`: Get elapsed system time in ticks
 
 ### Memory Management
 - `k_mem_init()`: Initialize memory management
 - `k_mem_alloc(unsigned int size)`: Allocate memory
 - `k_mem_dealloc(void* ptr)`: Deallocate memory
 - `k_mem_count_extfrag(unsigned int size)`: Count external fragmentation
+- `k_mem_get_usage()`: Get total allocated bytes
 
 
 ## Further Reading
