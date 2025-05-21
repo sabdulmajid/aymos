@@ -65,8 +65,13 @@ int main(void) {
  printf("ptask=%p\r\n", task_readback.ptask);
  printf("stack_high=0x%x\r\n", task_readback.stack_high);
  printf("tid=%u\r\n", task_readback.tid);
- printf("state=0x%x\r\n", task_readback.state);
- printf("stack_size=0x%x\r\n", task_readback.stack_size);
+  printf("state=0x%x\r\n", task_readback.state);
+  printf("stack_size=0x%x\r\n", task_readback.stack_size);
+
+  if (task_readback.state != READY) {
+    printf("FAIL: task state is not READY\r\n");
+    return 0;
+  }
 
  // check population of TCB
  if (task_readback.tid == mytask.tid && task_readback.stack_high != 0 && task_readback.ptask == &f_test_task && task_readback.stack_size == TEST_STACK_SIZE)
