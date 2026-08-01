@@ -1,0 +1,42 @@
+name: AymOS firmware and emulator
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  firmware-and-renode:
+    name: F401RE build and Renode boot
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Install locked project-local dependencies
+        run: make setup
+
+      - name: Build and validate the F401RE firmware
+        run: make firmware
+
+      - name: Run host tests
+        run: make test
+
+      - name: Run three clean emulator boots
+        run: RENODE_REPEAT=3 make test-emulator
+
+      - name: Retain firmware and emulator diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: aymos-f401re-renode-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            build/nucleo_f401re/boot/
+            build/renode/

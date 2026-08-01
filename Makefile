@@ -28,7 +28,11 @@ override LOCKED_TOOL_VARIABLES := \
 	OBJDUMP \
 	READELF \
 	SIZE \
-	NM
+	NM \
+	RENODE_DIR \
+	RENODE \
+	PYTHON_ENV_DIR \
+	PYTHON
 override EXTERNAL_TOOL_VARIABLES := $(strip $(foreach variable,$(LOCKED_TOOL_VARIABLES),\
 	$(if $(filter undefined default,$(origin $(variable))),,\
 		$(variable)[$(origin $(variable))])))
@@ -44,6 +48,10 @@ override OBJDUMP := $(CROSS_COMPILE)objdump
 override READELF := $(CROSS_COMPILE)readelf
 override SIZE := $(CROSS_COMPILE)size
 override NM := $(CROSS_COMPILE)nm
+override RENODE_DIR := $(abspath .tools/renode-1.16.1-dotnet-x86_64)
+override RENODE := $(RENODE_DIR)/renode
+override PYTHON_ENV_DIR := $(abspath .tools/python-venv-renode-1.16.1)
+override PYTHON := $(PYTHON_ENV_DIR)/bin/python3
 
 CMSIS_CORE_DIR := .deps/stm32cube_f4_core/Drivers/CMSIS/Core/Include
 CMSIS_DEVICE_DIR := .deps/cmsis_device_f4
@@ -127,7 +135,9 @@ LDFLAGS := \
 	-Wl,-Map,$(MAP) \
 	-Wl,--cref
 
-.PHONY: firmware setup validate clean clean-build flash disassembly help check-setup FORCE
+.PHONY: firmware setup validate test run test-emulator test-emulator-offline \
+	check-renode-platform clean clean-build clean-emulator flash disassembly \
+	help check-setup FORCE
 
 firmware: check-setup $(ELF) $(BIN) $(SIZE_REPORT) $(BUILD_METADATA) validate
 
@@ -136,6 +146,23 @@ setup:
 
 check-setup:
 	@./tools/setup.sh --check
+
+check-renode-platform:
+	@./tools/renode/check_platform.sh
+
+test: check-setup check-renode-platform
+	@env -u PYTHONHOME -u PYTHONPATH \
+		PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 \
+		$(PYTHON) -m unittest discover -s tests/renode -p 'test_*.py' -v
+
+run: firmware check-renode-platform
+	@./tools/renode/run.sh
+
+test-emulator: firmware check-renode-platform
+	@./tools/renode/test.sh
+
+test-emulator-offline: firmware check-renode-platform
+	@./tools/renode/test.sh --offline
 
 $(PROJECT_OBJECTS) $(VENDOR_C_OBJECTS) $(VENDOR_ASM_OBJECTS): | check-setup
 
@@ -186,6 +213,8 @@ $(BUILD_METADATA): FORCE $(ELF) tools/setup/dependencies.lock | check-setup
 		printf 'compiler=%s\n' "$$($(CC) -dumpfullversion)"; \
 		printf 'compiler_path=%s\n' '$(CC)'; \
 		printf 'architecture_flags=%s\n' '$(ARCH_FLAGS)'; \
+		printf 'renode=%s\n' '1.16.1'; \
+		printf 'python=%s\n' '3.12.13'; \
 		printf 'stm32cube_f4=%s\n' "$$(git -C .deps/stm32cube_f4_core rev-parse HEAD)"; \
 		printf 'cmsis_device_f4=%s\n' "$$(git -C $(CMSIS_DEVICE_DIR) rev-parse HEAD)"; \
 		printf 'stm32f4xx_hal=%s\n' "$$(git -C $(HAL_DIR) rev-parse HEAD)"; \
@@ -207,17 +236,24 @@ flash: $(BIN)
 clean-build:
 	@rm -rf -- "$(BUILD_DIR)"
 
-clean: clean-build
+clean-emulator:
+	@rm -rf -- "build/renode"
+
+clean: clean-build clean-emulator
 
 help:
 	@printf '%s\n' \
 		'make setup        Install and verify pinned project-local dependencies' \
 		'make firmware     Build and validate the F401RE boot firmware (default)' \
+		'make test         Run host tests for the Renode model and UART validator' \
+		'make run          Boot the exact F401RE ELF headlessly and print UART' \
+		'make test-emulator Run the bounded Renode/Robot UART boot test' \
+		'make test-emulator-offline  Repeat the test in a network namespace' \
 		'make validate     Re-run ELF, map, ABI, and memory validation' \
 		'make disassembly  Generate an annotated disassembly' \
-		'make clean        Remove this board/application build directory' \
+		'make clean        Remove firmware and emulator build artifacts' \
 		'make flash        Build, then stop with the unvalidated hardware notice' \
 		'' \
-		'Selection: BOARD=nucleo_f401re APP=boot (the only PR 1 choices)'
+		'Selection: BOARD=nucleo_f401re APP=boot (the only current choices)'
 
 -include $(DEPENDENCY_FILES)

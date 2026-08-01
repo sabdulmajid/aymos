@@ -3,8 +3,9 @@
 This document explains the main modules of AymOS and how they work together. It supplements the information in the README.
 
 > **Status:** The kernel and allocator below describe legacy experimental
-> source. PR 1 builds only the F401RE boot application and board support. It
-> does not link or validate task switching, EDF timing, or the allocator.
+> source. The current build links only the F401RE boot application and board
+> support. It does not link or validate task switching, EDF timing, or the
+> allocator.
 
 ## Kernel
 
@@ -43,10 +44,12 @@ Several small test programs under `src/tests` demonstrate the kernel and memory 
 
 These files are manual firmware experiments with separate `main` functions;
 they are not selected by the current build and are not an automated test suite.
-The staged campaign will replace them with native and Renode tests.
+The current slice adds automated host and Renode boot tests. Later PRs replace
+these manual kernel experiments with scheduler, lifecycle, and allocator tests.
 
 ## Next Steps
 
-For the verified build workflow, use `make setup && make firmware` and read
-`docs/BUILDING.md`. Study the legacy exception handlers as prototype code, not
-as a currently verified context-switch implementation.
+For the verified workflow, use `make setup`, `make firmware`, `make test`, and
+`make test-emulator`, then read `docs/BUILDING.md`. Study the legacy exception
+handlers as prototype code, not as a currently verified context-switch
+implementation.

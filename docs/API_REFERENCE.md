@@ -3,7 +3,7 @@
 This document describes the public functions provided by AymOS. Each section lists the function prototype, its parameters, the return value and any notes about its usage.
 
 > **Experimental source inventory:** These APIs are present in the legacy
-> kernel/allocator source but are not linked into the PR 1 boot firmware. Their
+> kernel/allocator source but are not linked into the current boot firmware. Their
 > lifecycle, timing, and memory contracts are not yet trustworthy. They become
 > supported only as later implementation-plan gates add architecture and native
 > tests.

@@ -1,0 +1,13 @@
+# Installed only from tools/setup/dependencies.lock's checksum-verified wheel
+# cache.  Keep every transitive dependency exact so --require-hashes can prove
+# the environment without consulting an index.
+robotframework==6.1 \
+    --hash=sha256:46b04648547eab6433ce107c4b40757aa8bea1e47bd86af9c0cff5546dac767e
+robotframework-retryfailed==0.2.0 \
+    --hash=sha256:b389dadb446a4d7356d7e953aabfdf2b0497d51df11d3da80abe9d4a8a0992c3
+psutil==5.9.8 \
+    --hash=sha256:d06016f7f8625a1825ba3732081d77c94589dca78b7a3fc072194851e88461a4
+PyYAML==6.0.3 \
+    --hash=sha256:ba1cc08a7ccde2d2ec775841541641e4548226580ab850948cbfda66a1befcdc
+telnetlib3==2.0.8 \
+    --hash=sha256:9c5b762d359581af61b7872c5abd1aa82d8fd49044d12b4eb5a7c88660901dbd
