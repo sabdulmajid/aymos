@@ -7,6 +7,16 @@ readonly script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly repo_root="$(cd -- "${script_dir}/../.." && pwd)"
 readonly renode_dir="${repo_root}/.tools/renode-1.16.1-dotnet-x86_64"
 readonly python_venv="${repo_root}/.tools/python-venv-renode-1.16.1"
+readonly robot_suite="${AYMOS_ROBOT_SUITE:-tests/renode/boot.robot}"
+
+case "${robot_suite}" in
+    tests/renode/boot.robot|tests/renode/lifecycle.robot) ;;
+    *)
+        printf 'renode-test: unsupported Robot suite: %s\n' \
+            "${robot_suite}" >&2
+        exit 2
+        ;;
+esac
 
 if [[ "${AYMOS_NETWORK_ISOLATED:-0}" == 1 ]]; then
     [[ -x "${AYMOS_IP_COMMAND:-}" ]] || {
@@ -35,4 +45,4 @@ exec env -u PYTHONHOME -u PYTHONPATH \
     --cleanup-timeout 3 \
     --kill-timeout 2 \
     -r "${AYMOS_ROBOT_RESULTS}" \
-    tests/renode/boot.robot
+    "${robot_suite}"

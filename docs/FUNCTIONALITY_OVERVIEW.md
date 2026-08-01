@@ -2,22 +2,29 @@
 
 This document explains the main modules of AymOS and how they work together. It supplements the information in the README.
 
-> **Status:** The kernel and allocator below describe legacy experimental
-> source. The current build links only the F401RE boot application and board
-> support. It does not link or validate task switching, EDF timing, or the
-> allocator.
+> **Status:** `APP=lifecycle` links and tests the narrow lifecycle kernel
+> described below. EDF timing semantics and `src/memory.c` remain experimental
+> and are not claimed as complete.
 
 ## Kernel
 
-The kernel (`src/kernel.c`) is responsible for task management and scheduling. It maintains an array of Task Control Blocks (TCBs) representing each task's stack, priority, and state. Tasks are scheduled using an Earliest Deadline First (EDF) policy. Key functions include:
+The kernel (`kernel/src/kernel.c`) owns task lifecycle state and a small ready
+selection rule. `arch/arm_cm4/context_switch.S` supplies the SVC veneer and
+PendSV save/restore path. Key functions include:
 
-- `osKernelInit` – sets up the kernel data structures and the idle task.
-- `osCreateTask` / `osCreateDeadlineTask` – allocate a stack, initialize the TCB, and add the task to the scheduler.
-- `osKernelStart` – starts executing tasks.
-- `osYield`, `osSleep`, and `osPeriodYield` – cause context switches through supervisor calls.
-- `osTaskExit` – remove a task and free its resources.
+- `os_kernel_init` – initializes task state, the idle task, stack alignment, and
+  exception priorities.
+- `os_task_create` – configures a pre-start task in an eight-byte-aligned fixed
+  stack slot.
+- `os_kernel_start` – enters the first task through SVC and PendSV.
+- `os_yield` and `os_sleep` – request lifecycle transitions through SVC.
+- `os_task_exit` – is reached by the entry trampoline when a task returns.
 
-Context switching is performed in `src/svc_handler.s` using ARM SVC and PendSV exceptions.
+PendSV saves/restores R4-R11 on PSP while its C state-commit helper runs on MSP.
+An exiting stack slot is reclaimed only in that handler context. The lifecycle
+Renode test independently exercises voluntary and SysTick-caused switches and
+assembly register probes verify R4-R11 preservation. The current deadline and
+priority comparison is not the explicit EDF timing model promised by PR 4.
 
 ## Memory Management
 
@@ -49,7 +56,7 @@ these manual kernel experiments with scheduler, lifecycle, and allocator tests.
 
 ## Next Steps
 
-For the verified workflow, use `make setup`, `make firmware`, `make test`, and
-`make test-emulator`, then read `docs/BUILDING.md`. Study the legacy exception
-handlers as prototype code, not as a currently verified context-switch
-implementation.
+For the verified workflow, use `make setup`, `make firmware`, `make test`,
+`make test-emulator`, and `make test-lifecycle`, then read
+`docs/BUILDING.md`. Use `make run-lifecycle` to print the exact guest lifecycle
+stream.

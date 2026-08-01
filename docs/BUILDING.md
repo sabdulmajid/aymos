@@ -94,6 +94,15 @@ This is equivalent to:
 make firmware BOARD=nucleo_f401re APP=boot
 ```
 
+The verified lifecycle image is selected explicitly:
+
+```sh
+make firmware BOARD=nucleo_f401re APP=lifecycle
+```
+
+It uses the same startup, linker map, board support, locked dependencies, and
+ELF validator. Its artifacts are under `build/nucleo_f401re/lifecycle/`.
+
 The Makefile invokes the compiler by its absolute project-local path. Project
 code uses `-Wall -Wextra -Werror` plus additional diagnostics. Vendor code uses
 visible `-Wall -Wextra` warnings without converting upstream warnings into
@@ -248,9 +257,53 @@ firmware nevertheless completes HAL initialization and both interrupt smokes.
 The model does not represent every F401RE peripheral or register.
 
 The CI workflow runs setup, firmware validation, host tests, and three fresh
-Renode boots on Ubuntu 24.04, then retains build and emulator artifacts even on
-failure. The workflow file is locally reviewed; only a GitHub run can verify
-the hosted-runner environment.
+Renode boots plus three lifecycle scenarios on Ubuntu 24.04, then retains build
+and emulator artifacts even on failure. PR 2's hosted boot workflow passed;
+each stacked PR must rerun its own hosted check.
+
+## Cortex-M4 lifecycle workflow
+
+Build and print the exact guest-generated lifecycle stream:
+
+```sh
+make run-lifecycle
+```
+
+Assert the same stream through the bounded Robot harness:
+
+```sh
+make test-lifecycle
+RENODE_REPEAT=10 make test-lifecycle
+```
+
+For a network-isolated run, select the lifecycle app on the existing offline
+target:
+
+```sh
+make APP=lifecycle test-emulator-offline
+```
+
+The lifecycle firmware fabricates an eight-byte-aligned basic exception frame,
+places the caller's argument in stacked R0, starts at an entry trampoline, and
+returns through `os_task_exit`. SVC validates the stacked PC/opcode and MSP/PSP
+origin. PendSV saves and restores R4-R11, commits the single-RUNNING-task state
+under PRIMASK while using MSP, and returns with `EXC_RETURN=0xFFFFFFFD` under the
+soft-float ABI. SysTick has higher urgency than PendSV; PendSV is lowest.
+
+The exact UART contract distinguishes voluntary yields from a preemption that
+can only occur after a sleeping task is awakened in SysTick. Assembly probes
+verify R4-R11 across both switch types. After each task returns, another thread
+observes that the old fixed stack slot was reclaimed, and the idle task proves
+continued PSP execution. Panic output, missing/extra/duplicate/reordered bytes,
+or a timeout fail the test and retain diagnostics.
+
+This is functional Cortex-M4 model evidence. The fixed stack pool is a narrow
+PR 3 mechanism; the educational heap remains unlinked until PR 5. The current
+deadline/priority comparison is not yet the explicit periodic/absolute-deadline
+model or deadline-miss accounting promised by PR 4.
+PR 3 sleep accepts only 1 through `INT32_MAX` ticks so its signed-delta wake
+comparison is valid across wrap; zero and larger intervals are rejected before
+SVC and exercised by the lifecycle workload.
 
 ## Application and hardware status
 
@@ -259,7 +312,8 @@ Startup `SystemInit` configures VTOR before `APP=boot` initializes HAL, an
 the application-local SysTick flag is observed, invokes SVC, checks its
 application-local flag, emits the smoke result from thread mode, and then
 waits for interrupts. Neither handler prints, schedules, switches context, nor
-uses PSP/PendSV. Real kernel SVC/PendSV/PSP evidence remains PR 3 scope.
+uses PSP/PendSV. Select `APP=lifecycle` for the separately tested real kernel
+path; keeping the smoke app independent protects the PR 2 boot regression.
 
 Physical flashing is not validated. `make flash` builds the binary, prints that
 limitation, and exits nonzero rather than running an undocumented global

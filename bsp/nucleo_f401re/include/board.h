@@ -12,5 +12,7 @@ bool board_systick_observed(void);
 bool board_svc_observed(void);
 void board_invoke_svc_smoke(void);
 void board_panic(void) __attribute__((noreturn));
+void board_kernel_panic(const char *reason) __attribute__((noreturn));
+void board_lifecycle_idle_hook(void);
 
 #endif

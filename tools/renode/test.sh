@@ -7,7 +7,23 @@ readonly script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly repo_root="$(cd -- "${script_dir}/../.." && pwd)"
 readonly python="${repo_root}/.tools/python-venv-renode-1.16.1/bin/python3"
 readonly renode="${repo_root}/.tools/renode-1.16.1-dotnet-x86_64/renode"
-readonly elf="${repo_root}/build/nucleo_f401re/boot/aymos.elf"
+readonly app="${AYMOS_APP:-boot}"
+case "${app}" in
+    boot)
+        robot_suite="tests/renode/boot.robot"
+        uart_validator="${script_dir}/verify_uart.py"
+        ;;
+    lifecycle)
+        robot_suite="tests/renode/lifecycle.robot"
+        uart_validator="${script_dir}/verify_lifecycle_uart.py"
+        ;;
+    *)
+        printf 'renode-test: unsupported AYMOS_APP: %s\n' "${app}" >&2
+        exit 2
+        ;;
+esac
+readonly robot_suite uart_validator
+readonly elf="${repo_root}/build/nucleo_f401re/${app}/aymos.elf"
 readonly boot_script="${repo_root}/platform/renode/boot.resc"
 readonly platform="${repo_root}/platform/renode/nucleo_f401re.repl"
 readonly repeat="${RENODE_REPEAT:-1}"
@@ -41,7 +57,8 @@ fi
     printf '%s\n' 'renode-test: the repository path may not contain whitespace' >&2
     exit 2
 }
-for required in "${python}" "${renode}" "${elf}" "${boot_script}" "${platform}"; do
+for required in "${python}" "${renode}" "${elf}" "${boot_script}" \
+    "${platform}" "${uart_validator}" "${repo_root}/${robot_suite}"; do
     [[ -f "${required}" ]] || {
         printf 'renode-test: missing required input: %s\n' "${required}" >&2
         exit 2
@@ -88,7 +105,7 @@ for ((attempt = 1; attempt <= repeat; attempt++)); do
     {
         printf 'schema=1\n'
         printf 'board=nucleo_f401re\n'
-        printf 'app=boot\n'
+        printf 'app=%s\n' "${app}"
         printf 'attempt=%s\n' "${attempt}"
         printf 'repeat=%s\n' "${repeat}"
         printf 'network_isolated=%s\n' "${offline}"
@@ -100,7 +117,7 @@ for ((attempt = 1; attempt <= repeat; attempt++)); do
         printf 'renode_version=1.16.1\n'
         printf 'renode_build=%s\n' "${renode_build}"
         printf 'command_file=command.txt\n'
-        printf 'robot_suite=tests/renode/boot.robot\n'
+        printf 'robot_suite=%s\n' "${robot_suite}"
         printf 'host_timeout_seconds=%s\n' "${host_timeout}"
         printf 'timing_claims=none_emulator_functional_test_only\n'
     } > "${attempt_dir}/metadata.txt"
@@ -113,6 +130,7 @@ for ((attempt = 1; attempt <= repeat; attempt++)); do
         "AYMOS_ROBOT_RESULTS=${robot_results}"
         "AYMOS_TEST_HOME=${attempt_dir}/home"
         "AYMOS_TEST_XDG_CONFIG_HOME=${attempt_dir}/xdg"
+        "AYMOS_ROBOT_SUITE=${robot_suite}"
     )
     runner=(env "${runner_environment[@]}" "${script_dir}/robot_once.sh")
     if [[ "${offline}" == true ]]; then
@@ -143,7 +161,7 @@ for ((attempt = 1; attempt <= repeat; attempt++)); do
         set +e
         env -u PYTHONHOME -u PYTHONPATH \
             PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 \
-            "${python}" "${script_dir}/verify_uart.py" "${uart_capture}" \
+            "${python}" "${uart_validator}" "${uart_capture}" \
             > "${attempt_dir}/uart.txt" 2> "${attempt_dir}/uart-validation.log"
         status=$?
         set -e

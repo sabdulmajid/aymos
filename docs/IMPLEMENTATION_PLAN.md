@@ -1,8 +1,8 @@
 # AymOS Real-Time Systems Lab implementation plan
 
-Status: PR 1 is an unmerged draft whose committed head is the stacked baseline;
-PR 2 is implemented and locally acceptance-tested, with independent re-review
-and the hosted CI run pending
+Status: PR 1 and PR 2 are unmerged drafts. Both passed independent review; PR 2
+also passed its hosted CI run. PR 3 is implemented and independently approved;
+publication remains conditional on its committed-state provenance run.
 
 This document defines the first trustworthy vertical slice of AymOS. It is a
 campaign plan, not a claim that the described target behavior exists today.
@@ -68,10 +68,10 @@ timing, or a hard real-time guarantee. Physical NUCLEO-F401RE support remains
 unverified until a named hardware test has actually been performed and its
 result recorded.
 
-## Re-verified current architecture
+## Re-verified baseline architecture
 
-The repository currently contains a compact, single-address-space kernel and
-board support prototype:
+At the start of the campaign the repository contained a compact,
+single-address-space kernel and board support prototype:
 
 - `stm-startup/startup_stm32f401retx.s` contains an STM32F401xE reset handler
   and vector table. Reset initializes `.data` and `.bss`, calls `SystemInit`,
@@ -136,7 +136,12 @@ following findings were re-verified rather than inherited from the audit:
 - README statements about protected memory, synchronization, comprehensive
   interrupt management, and a clean build are not supported by the code.
 
-These are gates for later PRs, not reasons to redesign everything in PR 1.
+PRs 1 and 2 resolved the build/boot findings. PR 3 replaces the obsolete kernel,
+handler, and standalone-SVC sources with `kernel/src/kernel.c` and
+`arch/arm_cm4/context_switch.S`. Its separate `APP=lifecycle` image uses fixed,
+eight-byte-aligned stack slots so lifecycle correctness can be established
+without pretending the legacy allocator is already hardened. Timing and
+allocator findings remain owned by PRs 4 and 5.
 
 ## Target repository structure
 
@@ -612,7 +617,8 @@ Local PR 2 evidence (2026-08-01): `make setup`, its offline integrity check,
 contained the two required lines exactly once. Robot checked the address-zero
 flash alias, `0x20018000` initial MSP word, and `0x08000000` VTOR. Each actual
 emulator process was bounded by an outer TERM/KILL timeout. These local results
-do not substitute for independent review or the hosted CI run.
+were followed by independent approval. Hosted GitHub Actions run 30721900895
+also passed on the committed PR 2 head.
 
 ### PR 3: task lifecycle and context-switch correctness
 
@@ -648,6 +654,21 @@ Acceptance evidence:
   alignment, and soft-float assumptions.
 
 Gate: do not expand timing semantics until the lifecycle scenario passes.
+
+Local PR 3 implementation evidence (2026-08-01): the lifecycle ELF passes the
+F401RE/soft-float/vector/memory validator.
+`make run-lifecycle` and `make test-lifecycle` execute the real ARM image and
+accept only the exact guest UART sequence proving first dispatch, voluntary
+yields, a sleeping-task wake followed by SysTick-driven preemption, task
+arguments, PSP thread mode, trampoline returns, handler-side reclamation, user
+continuation, and idle continuation. Assembly probes validate R4-R11 across
+both voluntary and preemptive switches. Ten repeated lifecycle boots, the
+network-isolated lifecycle test, the original boot path, forced timeout/process
+cleanup, and input-validation negatives passed. Independent architecture review
+approved the frame, SVC, PSP/MSP, EXC_RETURN, register, priority, state, reclaim,
+ABI, failure, test, documentation, and scope contracts after one blocking sleep
+half-range finding was fixed and retested. Committed-state results remain the
+last publication gate.
 
 ### PR 4: explicit timing model and EDF correctness
 
