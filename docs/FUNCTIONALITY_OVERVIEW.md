@@ -2,6 +2,10 @@
 
 This document explains the main modules of AymOS and how they work together. It supplements the information in the README.
 
+> **Status:** The kernel and allocator below describe legacy experimental
+> source. PR 1 builds only the F401RE boot application and board support. It
+> does not link or validate task switching, EDF timing, or the allocator.
+
 ## Kernel
 
 The kernel (`src/kernel.c`) is responsible for task management and scheduling. It maintains an array of Task Control Blocks (TCBs) representing each task's stack, priority, and state. Tasks are scheduled using an Earliest Deadline First (EDF) policy. Key functions include:
@@ -37,8 +41,12 @@ Several small test programs under `src/tests` demonstrate the kernel and memory 
 - `allocation_timing_test.c` – measures memory allocation performance.
 - `periodic_test.c` – exercises periodic task behaviour.
 
-Running `make` builds the tests using the ARM toolchain specified in the `Makefile`.
+These files are manual firmware experiments with separate `main` functions;
+they are not selected by the current build and are not an automated test suite.
+The staged campaign will replace them with native and Renode tests.
 
 ## Next Steps
 
-To deepen your understanding of AymOS, inspect the tests and experiment with writing new tasks. Study the ARM exception handlers in `svc_handler.s` to see how registers are saved and restored during a context switch.
+For the verified build workflow, use `make setup && make firmware` and read
+`docs/BUILDING.md`. Study the legacy exception handlers as prototype code, not
+as a currently verified context-switch implementation.

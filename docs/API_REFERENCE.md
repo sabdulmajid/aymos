@@ -2,6 +2,12 @@
 
 This document describes the public functions provided by AymOS. Each section lists the function prototype, its parameters, the return value and any notes about its usage.
 
+> **Experimental source inventory:** These APIs are present in the legacy
+> kernel/allocator source but are not linked into the PR 1 boot firmware. Their
+> lifecycle, timing, and memory contracts are not yet trustworthy. They become
+> supported only as later implementation-plan gates add architecture and native
+> tests.
+
 ## Task Management
 
 ### `void osKernelInit(void)`
@@ -53,4 +59,3 @@ Free a block previously allocated with `k_mem_alloc`. Returns `RTX_OK` on succes
 
 ### `int k_mem_count_extfrag(unsigned int size)`
 Return the number of free blocks that are too small to satisfy an allocation of `size` bytes.
-

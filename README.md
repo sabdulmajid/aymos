@@ -1,92 +1,134 @@
-# AymOS - A Lightweight Real-Time Operating System
+# AymOS Real-Time Systems Lab
 
-AymOS is a sophisticated real-time operating system (RTOS) designed for embedded systems, specifically targeting ARM Cortex-M4 microcontrollers. Built from the ground up in C, it provides a robust foundation for real-time applications with a focus on efficiency, reliability, and precise timing control.
+AymOS is becoming a small, inspectable Cortex-M4 real-time systems lab. The
+current verified slice builds a board-targeted boot image reproducibly. The EDF
+kernel source is retained for the next architecture/lifecycle PR, but is not
+linked into the PR 1 boot application and is not yet claimed to execute safely.
 
-## Key Features
+The canonical target is the STM32F401RE on a NUCLEO-F401RE board:
 
-### Real-Time Task Management
-- **Earliest Deadline First (EDF) Scheduling**: Implements a dynamic priority scheduling algorithm that ensures tasks meet their timing requirements
-- **Priority Support**: Tasks have an explicit priority used to break deadline ties and can be changed at runtime
-- **Task States**: Comprehensive task state management (READY, RUNNING, SLEEPING, DORMANT)
-- **Deadline-Based Execution**: Tasks can be created with specific deadlines and time remaining parameters
-- **Context Switching**: Efficient context switching mechanism using ARM's SVC and PendSV exceptions
-- **Task Information**: Detailed task information retrieval and management capabilities
+- ARM Cortex-M4 / Thumb-2;
+- 512 KiB flash at `0x08000000`;
+- 96 KiB SRAM at `0x20000000`;
+- USART2 on PA2/PA3 at 115200 8N1;
+- user LED on PA5; and
+- software floating-point ABI until floating-point context preservation is
+  implemented and tested.
 
-### Memory Management
-- **Dynamic Memory Allocation**: Custom memory allocator with efficient block management
-- **Memory Fragmentation Handling**: Built-in memory coalescing to prevent fragmentation
-- **Memory Protection**: Task-specific memory ownership and access control
-- **Stack Management**: Per-task stack allocation and management
-- **Memory Statistics**: External fragmentation monitoring and reporting
+## Implemented and tested
 
-### System Features
-- **System Tick Timer**: Precise timing control with configurable system tick
-- **Interrupt Handling**: Comprehensive interrupt management system
-- **Task Synchronization**: Built-in mechanisms for task coordination
-- **Error Handling**: Robust error detection and handling mechanisms
-- **Debug Support**: Integrated debugging capabilities
+- Rootless, project-local Arm GNU Toolchain 14.3.rel1 setup on Linux x86_64.
+- Immutable STM32CubeF4 v1.28.3-compatible CMSIS Core, F401 device, and HAL
+  sources with commit and cleanliness validation.
+- Explicit source manifests; no source-directory wildcard discovery.
+- F401xE startup/vector assembly and a reviewed F401RE linker memory map.
+- `SystemInit` sets VTOR to flash before `HAL_Init` enables SysTick.
+- HAL-only SysTick, 84 MHz clock setup, GPIO, and polling USART2 boot output.
+- A linker-owned, eight-byte-aligned AymOS heap region, an empty newlib heap,
+  and a separate 4 KiB MSP reservation.
+- ELF, binary, map, size, build metadata, attributes, symbols, vector bytes, and
+  memory-range validation.
 
-## Technical Specifications
+The build has been validated locally. Renode boot and CI are PR 2 scope, so the
+UART banner has not yet been observed in an emulator in this branch.
 
-- **Architecture**: ARM Cortex-M4
-- **Programming Language**: C
-- **Memory Model**: Protected memory space with task isolation
-- **Scheduling Algorithm**: EDF (Earliest Deadline First)
-- **Interrupt Priority Levels**: Configurable interrupt priorities for system services
+## Build
 
-## Getting Started
+The supported PR 1 host is Linux x86_64. Required bootstrap commands are
+`awk`, `bash`, Git 2.25+, curl 7.61+, `make`, `file`, `grep`, `od`, `sha256sum`,
+`stat`, `tar`, and `xz`. Root access and a global ARM compiler are not used.
 
-### Prerequisites
-- ARM Cortex-M4 compatible development board
-- ARM GCC toolchain
-- STM32CubeIDE or similar development environment
-
-### Building the Project
-```bash
-# Clone the repository
-git clone https://github.com/{username}/aymos.git
-
-# Build the project
-make
+```sh
+make setup
+make firmware
 ```
 
-### Basic Usage
-```c
-// Initialize the kernel
-osKernelInit();
+`make setup` downloads a 149,789,432-byte Arm archive, checks its locked
+SHA-256 before extraction, and obtains only the locked STM32 source components
+under `.tools/` and `.deps/`. It is safe to rerun and rejects locally modified
+dependencies rather than overwriting them.
 
-// Create a task with deadline
-TCB myTask;
-myTask.ptask = myTaskFunction;
-myTask.stack_size = STACK_SIZE;
-osCreateDeadlineTask(deadline_ms, &myTask);
+Every build first runs `tools/setup.sh --check`, an offline/read-only integrity
+gate. Compilation cannot start until all consumed tool hashes, dependency
+commits, clean states, files, and licenses pass.
 
-// Start the kernel
-osKernelStart();
+The only current selection is explicit:
+
+```sh
+make firmware BOARD=nucleo_f401re APP=boot
 ```
 
-## API Reference
+Unknown board/application names fail instead of silently changing the image.
+See [docs/BUILDING.md](docs/BUILDING.md) for dependency provenance, artifact
+paths, validation details, and clean-build instructions.
 
-This repository includes a detailed [API reference](docs/API_REFERENCE.md) that
-describes every public function. Below is a short overview of the most commonly
-used calls.
+Key outputs are under `build/nucleo_f401re/boot/`:
 
-### Task Management
-- `osKernelInit()` – initialise the kernel
-- `osKernelStart()` – start executing tasks
-- `osCreateDeadlineTask(int deadline, TCB* task)` – create a task with a specific deadline
-- `osYield()` – yield CPU to the next ready task
-- `osSleep(int timeInMs)` – put the current task to sleep
-- `osTaskExit()` – terminate the current task
-- `osGetTID()` – obtain the current task ID
-- `osSetPriority(uint8_t priority, task_t TID)` – change a task's priority
+```text
+aymos.elf
+aymos.bin
+aymos.map
+size.txt
+build-metadata.txt
+file.txt
+readelf-header.txt
+readelf-attributes.txt
+readelf-sections.txt
+readelf-program-headers.txt
+symbols.txt
+vector-table.bin
+```
 
-### Memory Management
-- `k_mem_init()` – initialise memory management
-- `k_mem_alloc(unsigned int size)` – allocate memory
-- `k_mem_dealloc(void* ptr)` – free allocated memory
-- `k_mem_count_extfrag(unsigned int size)` – count external fragmentation
+Useful commands:
 
+```sh
+make validate
+make disassembly
+make clean
+make help
+```
 
-## Further Reading
-See [docs/FUNCTIONALITY_OVERVIEW.md](docs/FUNCTIONALITY_OVERVIEW.md) for a more detailed description of how each module operates.
+`make flash` deliberately stops after building and prints an unvalidated
+hardware notice. It does not guess which probe/programmer the user has.
+
+## Implemented but experimental
+
+The legacy source tree contains:
+
+- a 16-slot task table with an EDF-like scan and priority tie breaker;
+- Cortex-M SVC/PendSV assembly intended to save and restore R4-R11 on PSP; and
+- a linked-list allocator with splitting, task-owner metadata, and coalescing.
+
+These components are educational prototypes. They currently have known task
+state, frame, timing-model, interrupt, alignment, and allocator issues recorded
+in [the implementation plan](docs/IMPLEMENTATION_PLAN.md). Allocator ownership
+metadata is not hardware memory protection or task isolation.
+
+The API inventory in [docs/API_REFERENCE.md](docs/API_REFERENCE.md) describes
+the legacy source surface, not a verified PR 1 runtime contract.
+
+## Planned campaign
+
+The reviewed sequence is:
+
+1. reproducible F401RE build (this slice);
+2. Renode boot harness and emulator tests;
+3. task lifecycle and Cortex-M context-switch correctness;
+4. explicit timing semantics and deterministic EDF tests;
+5. allocator hardening;
+6. bounded structured kernel tracing; and
+7. the Deadline Lab workload and standalone scheduling timeline.
+
+The complete gates, review requirements, and deferred scope are in
+[docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md).
+
+Message queues, synchronization primitives, networking, filesystems, USB,
+process isolation, POSIX compatibility, and a general shell are not implemented
+and are explicitly outside this campaign.
+
+## Hardware and timing status
+
+No physical NUCLEO-F401RE was available for this build slice. Board flashing and
+serial output therefore remain unvalidated. Future Renode results will prove
+functional event ordering in the model; they will not prove physical interrupt
+latency, worst-case execution time, or hard real-time guarantees.
