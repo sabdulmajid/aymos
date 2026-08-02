@@ -1,10 +1,9 @@
 # AymOS Real-Time Systems Lab implementation plan
 
-Status: PRs 1 through 3 are unmerged drafts. PRs 1 and 2 passed independent
-review, and PR 2 passed hosted CI. PR 3 is committed at the base used by PR 4
-and passed its independent architecture review. PR 4 is implemented and passed
-two independent timing-policy reviews; its published draft must still record
-the committed-state gate and hosted CI result.
+Status: PRs 1 through 4 are unmerged drafts and passed their assigned local
+reviews and gates. PR 5 is implemented in its stacked worktree, passed its
+native/ARM gates and independent adversarial review, and now requires only
+committed-state and hosted-CI publication evidence before final review.
 
 This document defines the first trustworthy vertical slice of AymOS. It is a
 campaign plan, not a claim that the described target behavior exists today.
@@ -142,8 +141,10 @@ PRs 1 and 2 resolved the build/boot findings. PR 3 replaces the obsolete kernel,
 handler, and standalone-SVC sources with `kernel/src/kernel.c` and
 `arch/arm_cm4/context_switch.S`. Its separate `APP=lifecycle` image uses fixed,
 eight-byte-aligned stack slots so lifecycle correctness can be established
-without pretending the legacy allocator is already hardened. Timing and
-allocator findings remain owned by PRs 4 and 5.
+without pretending the legacy allocator was already hardened. PR 4 replaced
+the overloaded timing model with explicit EDF state. PR 5 replaces the legacy
+allocator with the checked task-owned core described below while deliberately
+retaining those fixed task stacks.
 
 ## Target repository structure
 
@@ -752,9 +753,9 @@ Acceptance evidence:
 - Linker/runtime assertions agree on heap start/end and every returned stack is
   eight-byte aligned.
 - Custom and newlib heaps cannot overlap.
-- The ownership and task-exit policy is documented and tested. The likely
-  policy is deferred stack reclaim by the kernel plus explicit user allocation
-  cleanup, unless review demonstrates safe bounded release-all semantics.
+- The ownership and task-exit policy is documented and tested: fixed stack
+  reclaim remains deferred, and PendSV automatically releases every remaining
+  non-stack block owned by the exiting task before its ID is reused.
 - A repeated Renode create/return/exit scenario reuses task slots and memory
   without corruption, leaks beyond the documented policy, or changing allocator
   invariants.
@@ -763,6 +764,33 @@ Acceptance evidence:
   metrics, and sanitizer test fidelity.
 
 Gate: memory-stress demonstrations remain excluded until these tests pass.
+
+Local PR 5 implementation evidence (2026-08-02): the legacy `k_mem` source and
+manual allocator tests were retired in favor of one `sizeof`-based portable
+core linked unchanged into native and ARM builds. The arena is normalized to
+eight-byte boundaries and partitioned by contiguous checked metadata. Next-fit
+starts at the first block, continues from the block after allocation, preserves
+its cursor on ordinary free, and retargets only when coalescing removes the
+cursor. Invalid metadata fails closed; invalid, interior, double, boundary, and
+foreign-owner frees are rejected.
+
+Kernel APIs assign allocations to the current RUNNING user task and preserve
+the incoming PRIMASK on all success/error paths. Runtime `os_task_create` is
+thread-mode only and atomically publishes a complete fixed-stack task; an
+immediate outranking job pends PendSV without prematurely changing the caller's
+RUNNING state. On exit, PendSV keeps the fixed PSP stack intact while running a
+one-pass owner mark plus one-pass coalesce on MSP, then resets the slot. The
+linear interrupt-masked cleanup latency is documented; fixed task stacks remain
+outside the heap.
+
+The native sanitizer suite passes 548 checks. `APP=allocator` builds and
+validates for ARMv7E-M soft-float and emits its exact Renode oracle: eight
+immediate runtime preemptions reuse task slot 2, payload canaries survive
+foreign/free/reclaim operations, and final state is zero allocations and one
+coalesced free block. Repeat, offline, and earlier-PR regression gates passed.
+Independent adversarial review approved the implementation after its one
+ownership-contract finding was corrected; committed-state and hosted-CI
+evidence remain the publication gate.
 
 ### PR 6: structured kernel tracing
 
@@ -911,7 +939,7 @@ only after its own acceptance evidence exists.
 | `printf` in boot path | Avoid dynamic/formatted output where a fixed UART write suffices. | Link/map/runtime check in PRs 1-2. |
 | Exception-frame correctness | Existing assembly is not trusted merely because it links. | Independent architecture review and Renode lifecycle test in PR 3. |
 | Tick wraparound contract | Relative durations remain below half the 32-bit range; runtime due/EDF order uses full 64-bit monotonic keys and fails before 64-bit exhaustion. | Native low-word wrap, exact-half, greater-than-half overdue, strict-order, and exhaustion-boundary tests in PR 4. |
-| Allocator ownership on task exit | Deferred stack reclaim is mandatory; automatic release of all other task allocations is undecided. | Explicit policy plus adversarial review in PR 5. |
+| Allocator ownership on task exit | Resolved in PR 5 implementation: fixed stack reclaim remains deferred; every non-stack allocation is task-ID owned and auto-released by a bounded mark/coalesce sweep in PendSV before slot reuse. This prevents outstanding blocks from being inherited, but tags are not generation-aware stale-pointer detection; pointers retained after free/exit are invalid. This bookkeeping is not isolation. | Preserve native owner tests, ARM slot-reuse evidence, stale-pointer documentation, and linear interrupt-masked cleanup latency. |
 | Trace record/wire encoding | Naturally aligned 32-byte records, guest tick/sequence ordering, selection snapshots, drop-new, and terminal loss footer are fixed directions; exact field packing/framing remains open. | Schema review and corrupt-stream tests in PR 6. |
 | Trace perturbation | Events change guest execution cost even without blocking output. Treat results as explanatory ordering, not timing proof. | Record overflow/loss and document in PR 6. |
 | Deterministic execution demand | Use deterministic guest work/release units; never host wall-clock loops. | Repeated semantic traces in PRs 4 and 7. |

@@ -2,7 +2,6 @@
 #include <stdio.h>
 #include "common.h"
 #include "k_task.h"
-#include "k_mem.h"
 
 int counter1 = 0;
 int counter2 = 0;

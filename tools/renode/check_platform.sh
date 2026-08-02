@@ -14,6 +14,7 @@ readonly runtime_inputs=(
     tests/renode/boot.robot
     tests/renode/lifecycle.robot
     tests/renode/edf.robot
+    tests/renode/allocator.robot
 )
 
 for runtime_input in "${runtime_inputs[@]}"; do

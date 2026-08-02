@@ -5,7 +5,8 @@ current verified slice builds board-targeted images reproducibly, boots the
 exact ELF headlessly in pinned Renode, and runs a deterministic Cortex-M4 task
 lifecycle through SVC, PendSV, PSP, and SysTick. The same kernel now applies an
 explicit, wrap-safe EDF timing policy to a deterministic periodic workload.
-The educational allocator remains a later gate.
+Task-owned dynamic memory now uses the same hardened educational allocator in
+native sanitizer tests and real Cortex-M4 firmware.
 
 The canonical target is the STM32F401RE on a NUCLEO-F401RE board:
 
@@ -58,6 +59,15 @@ The canonical target is the STM32F401RE on a NUCLEO-F401RE board:
   missed active releases, and deterministic EDF ties.
 - An exact two-task ARM EDF oracle that proves two tick-driven periodic
   releases/preemptions and `os_wait_next_period` through SVC/PendSV.
+- A bounded eight-byte-aligned next-fit allocator with checked in-arena
+  metadata, exact-owner frees, coalescing, usage/fragmentation statistics, and
+  an empty, non-overlapping newlib heap.
+- Thread-mode runtime task creation and deferred PendSV cleanup of all
+  allocations owned by an exiting task, while the existing fixed stack slots
+  remain unchanged.
+- Native allocator tests under ASan/UBSan plus an exact ARM workload that
+  repeatedly reuses one task slot, exercises a 1024-byte allocation, checks
+  payload canaries, and proves owner cleanup and interrupt-mask restoration.
 
 ## Build
 
@@ -77,6 +87,7 @@ make run
 make test-emulator
 make test-lifecycle
 make test-edf
+make test-allocator
 ```
 
 `make setup` downloads locked Arm, Renode, CPython, Python-wheel, and STM32
@@ -94,6 +105,7 @@ Application selection is explicit:
 make firmware BOARD=nucleo_f401re APP=boot
 make firmware BOARD=nucleo_f401re APP=lifecycle
 make firmware BOARD=nucleo_f401re APP=edf
+make firmware BOARD=nucleo_f401re APP=allocator
 ```
 
 Unknown board/application names fail instead of silently changing the image.
@@ -128,6 +140,8 @@ make run-lifecycle
 RENODE_REPEAT=10 make test-lifecycle
 make run-edf
 RENODE_REPEAT=10 make test-edf
+make run-allocator
+RENODE_REPEAT=10 make test-allocator
 make clean
 make help
 ```
@@ -143,8 +157,10 @@ hardware notice. It does not guess which probe/programmer the user has.
 
 ## Implemented but deliberately limited
 
-Tasks must be created before kernel start and each receives one fixed stack
-slot. Periodic tasks use constrained deadlines
+Tasks may be created before kernel start or by a running user task. Runtime
+creation is bounded by the four user slots and runs its slot/frame publication
+under PRIMASK; an immediately ready task that outranks the caller requests
+PendSV. Each task still receives one fixed stack slot. Periodic tasks use constrained deadlines
 (`relative_deadline_ticks <= period_ticks`) and permit one active job per task.
 If a cadence release arrives before completion, `missed_release_count` is
 incremented and cadence advances; no overlapping job is created. Execution
@@ -153,10 +169,18 @@ budget is reported/accounted but not enforced. Intervals are limited to
 monotonic kernel time. Public 32-bit tick fields are the low word for familiar
 guest display; EDF never compares those wrapped values.
 
-The unlinked allocator in `src/memory.c` is still an educational prototype with
-known alignment, metadata, interleaving, ownership, and validation issues. It
-is not used for the PR 3 task stacks. Allocator ownership metadata is not
-hardware memory protection or task isolation.
+`os_memory_alloc` is intentionally a small kernel allocator, not a libc
+replacement. Calls are limited to the currently running non-idle task in
+thread mode. Every block is tagged with that task ID; exact-base frees by any
+other task are rejected. PendSV releases remaining task-owned blocks only
+after execution has left the exiting task's PSP. Cleanup prevents outstanding
+blocks from remaining allocated to, or being inherited by, a reused task slot,
+but adds bounded interrupt-masked exit latency proportional to the number of
+heap blocks. Task-ID tags do not provide generation-aware stale-pointer
+detection: a pointer retained after explicit free or task exit is invalid and
+must not be reused. Fixed task stacks are deliberately not moved onto this heap
+in PR 5. Ownership metadata is defensive bookkeeping, not hardware memory
+protection or task isolation.
 
 ## Planned campaign
 
@@ -168,7 +192,7 @@ The reviewed sequence is:
    tested);
 4. explicit timing semantics and deterministic EDF tests (implemented and
    tested locally);
-5. allocator hardening;
+5. allocator hardening (implemented and tested locally);
 6. bounded structured kernel tracing; and
 7. the Deadline Lab workload and standalone scheduling timeline.
 

@@ -190,16 +190,17 @@ make test-emulator
 The second setup invocation proves idempotence. Do not point cleanup commands at
 the repository root or a home directory.
 
-## Memory ownership in PR 1
+## Memory ownership and allocator boundary
 
 The linker reserves all free SRAM between `.bss` and the 4 KiB MSP region as
 the AymOS heap and exports `__aymos_heap_start__`/`__aymos_heap_end__`. Those
 boundaries are eight-byte aligned. The newlib heap start and end are identical,
 and the retained `_sbrk` implementation always returns `ENOMEM`.
 
-The legacy AymOS allocator is not linked into the boot app. Its later hardening
-will consume the already-reserved linker region. PR 1 therefore establishes
-non-overlapping ownership without claiming that the allocator itself is fixed.
+The boot app does not need dynamic memory. Kernel apps initialize the hardened
+allocator over this exact interval, validate its runtime boundaries, and never
+delegate it to newlib. The portable core is `kernel/src/allocator.c`; the
+obsolete `k_mem` implementation was removed in PR 5.
 
 ## Headless Renode workflow
 
@@ -308,7 +309,7 @@ continued PSP execution. Panic output, missing/extra/duplicate/reordered bytes,
 or a timeout fail the test and retain diagnostics.
 
 This is functional Cortex-M4 model evidence. The fixed stack pool remains a
-narrow mechanism; the educational heap is unlinked until PR 5. Sleep accepts
+narrow mechanism separate from the PR 5 dynamic heap. Sleep accepts
 only 1 through `INT32_MAX` ticks; zero/larger intervals are rejected before SVC
 and exercised by the lifecycle workload.
 
@@ -336,6 +337,41 @@ releases on its fixed cadence at tick 20/deadline 30 and preempts again. The
 same fixture constants drive native and Cortex-M tests. Robot and the raw UART
 parser reject missing, duplicate, extra, or reordered semantic lines.
 
+## Native allocator and ARM ownership workload
+
+`make test-native` also rebuilds `kernel/src/allocator.c` with strict host
+warnings, AddressSanitizer, and UndefinedBehaviorSanitizer. Its separate
+compiler/input/binary provenance is retained in
+`build/native/compiler-allocator.txt`. Deterministic tests cover aligned and
+misaligned arenas, split/exact-fit, next-fit continuation/wrap, coalescing,
+exhaustion/recovery, a 1024-byte stack-sized block, invalid/interior/boundary/
+double/foreign-owner frees, owner sweep, fragmentation/statistics, payload
+canaries, and fail-closed metadata corruption.
+
+Run the real ARM task-owned memory scenario with:
+
+```sh
+make run-allocator
+make test-allocator
+RENODE_REPEAT=10 make test-allocator
+make APP=allocator test-emulator-offline
+```
+
+Task 1 allocates a persistent canary buffer, then creates an immediately
+higher-ranked task 2 eight times at runtime. Each new task preempts through the
+normal pending PendSV path, allocates aligned buffers including 1024 bytes,
+rejects a foreign-owner free, an overflowing request, and a double free,
+verifies PRIMASK restoration and payload canaries, then returns. PendSV runs on
+MSP, releases the exiting task's two outstanding buffers, and makes slot 2
+reusable. The manager verifies the heap and counters after every round; idle
+requires zero allocated blocks and one fully coalesced free block. The exact raw
+UART validator rejects any missing, extra, duplicated, or reordered result.
+
+This is allocator/lifecycle correctness evidence in Renode, not a hardware
+latency or worst-case exit-sweep measurement. Owner cleanup masks interrupts
+for a linear mark-and-coalesce pass, so keeping the educational heap small and
+freeing long-lived allocations explicitly are part of the current contract.
+
 Periodic scheduling is constrained-deadline and single-active-job. At a cadence
 boundary, an unfinished active job receives a deadline miss at equality when
 applicable; the unavailable release is separately counted in
@@ -359,6 +395,8 @@ waits for interrupts. Neither handler prints, schedules, switches context, nor
 uses PSP/PendSV. Select `APP=lifecycle` for the separately tested real kernel
 path; keeping the smoke app independent protects the PR 2 boot regression.
 Select `APP=edf` for explicit periodic timing/EDF behavior.
+Select `APP=allocator` for runtime task creation, owner cleanup, and allocator
+invariant evidence.
 
 Physical flashing is not validated. `make flash` builds the binary, prints that
 limitation, and exits nonzero rather than running an undocumented global

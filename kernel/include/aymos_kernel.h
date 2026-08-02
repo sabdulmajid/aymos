@@ -1,6 +1,7 @@
 #ifndef AYMOS_KERNEL_H
 #define AYMOS_KERNEL_H
 
+#include "aymos_allocator.h"
 #include "aymos_scheduler.h"
 
 #include <stdbool.h>
@@ -62,6 +63,11 @@ os_task_id_t os_current_task(void);
 os_task_id_t os_last_reclaimed_task(void);
 uint32_t os_reclaim_count(void);
 int os_task_info(os_task_id_t id, os_task_info_t *info);
+void *os_memory_alloc(size_t size);
+int os_memory_free(void *pointer);
+int os_memory_stats(os_memory_stats_t *stats);
+size_t os_memory_count_fragments(size_t requested_size);
+bool os_memory_validate(void);
 bool os_thread_uses_psp(void);
 bool os_exception_configuration_valid(void);
 
