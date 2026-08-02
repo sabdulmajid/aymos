@@ -3,9 +3,9 @@
 AymOS is becoming a small, inspectable Cortex-M4 real-time systems lab. The
 current verified slice builds board-targeted images reproducibly, boots the
 exact ELF headlessly in pinned Renode, and runs a deterministic Cortex-M4 task
-lifecycle through SVC, PendSV, PSP, and SysTick. EDF timing semantics and the
-educational allocator remain later gates; this slice does not claim that they
-are complete.
+lifecycle through SVC, PendSV, PSP, and SysTick. The same kernel now applies an
+explicit, wrap-safe EDF timing policy to a deterministic periodic workload.
+The educational allocator remains a later gate.
 
 The canonical target is the STM32F401RE on a NUCLEO-F401RE board:
 
@@ -50,11 +50,19 @@ The canonical target is the STM32F401RE on a NUCLEO-F401RE board:
 - An exact lifecycle oracle that proves first dispatch, two voluntary yields,
   SysTick-driven preemption, R4-R11 preservation, two safe exits/reclaims, and
   continued idle execution in the ARM firmware.
+- One architecture-neutral C scheduling policy linked unchanged into the ARM
+  kernel and native ASan/UBSan tests; there is no host reimplementation of the
+  emulator result.
+- Explicit one-shot/periodic task configuration, delayed and periodic releases,
+  sleep/wake state, absolute deadlines, execution accounting, deadline misses,
+  missed active releases, and deterministic EDF ties.
+- An exact two-task ARM EDF oracle that proves two tick-driven periodic
+  releases/preemptions and `os_wait_next_period` through SVC/PendSV.
 
 ## Build
 
 The supported host is Linux x86_64. Required bootstrap commands are
-`awk`, `bash`, Git 2.25+, curl 7.61+, `make`, `cmp`, `env`, `file`, `find`,
+`awk`, `bash`, Git 2.25+, curl 7.61+, `make`, `cc`, `cmp`, `env`, `file`, `find`,
 `grep`, `od`, `readlink`, `sha256sum`, `sort`, `stat`, `tar`, `timeout`,
 `xargs`, and `xz`.
 Root access, a global ARM compiler, a global Renode, and a system Python
@@ -68,6 +76,7 @@ make test
 make run
 make test-emulator
 make test-lifecycle
+make test-edf
 ```
 
 `make setup` downloads locked Arm, Renode, CPython, Python-wheel, and STM32
@@ -84,6 +93,7 @@ Application selection is explicit:
 ```sh
 make firmware BOARD=nucleo_f401re APP=boot
 make firmware BOARD=nucleo_f401re APP=lifecycle
+make firmware BOARD=nucleo_f401re APP=edf
 ```
 
 Unknown board/application names fail instead of silently changing the image.
@@ -116,6 +126,8 @@ make test-emulator-offline
 RENODE_REPEAT=10 make test-emulator
 make run-lifecycle
 RENODE_REPEAT=10 make test-lifecycle
+make run-edf
+RENODE_REPEAT=10 make test-edf
 make clean
 make help
 ```
@@ -129,15 +141,17 @@ must appear exactly once and in order.
 `make flash` deliberately stops after building and prints an unvalidated
 hardware notice. It does not guess which probe/programmer the user has.
 
-## Implemented but experimental
+## Implemented but deliberately limited
 
-The lifecycle kernel is intentionally narrow. Tasks must be created before
-kernel start, each receives one fixed stack slot, and the current
-`deadline_ticks` plus priority fields provide only the deterministic selection
-needed by the lifecycle scenario. Periods, absolute deadlines, miss accounting,
-and reusable task timing configuration are PR 4 work. PR 3 sleep is explicitly
-bounded to 1 through `INT32_MAX` ticks so its signed-delta wake comparison is
-safe across a single counter wrap; the final wraparound test matrix is PR 4.
+Tasks must be created before kernel start and each receives one fixed stack
+slot. Periodic tasks use constrained deadlines
+(`relative_deadline_ticks <= period_ticks`) and permit one active job per task.
+If a cadence release arrives before completion, `missed_release_count` is
+incremented and cadence advances; no overlapping job is created. Execution
+budget is reported/accounted but not enforced. Intervals are limited to
+`INT32_MAX` ticks, while release/wake/deadline ordering uses a single 64-bit
+monotonic kernel time. Public 32-bit tick fields are the low word for familiar
+guest display; EDF never compares those wrapped values.
 
 The unlinked allocator in `src/memory.c` is still an educational prototype with
 known alignment, metadata, interleaving, ownership, and validation issues. It
@@ -151,8 +165,9 @@ The reviewed sequence is:
 1. reproducible F401RE build (implemented and tested);
 2. Renode boot harness and emulator tests (implemented and tested locally);
 3. task lifecycle and Cortex-M context-switch correctness (implemented and
-   tested on this branch);
-4. explicit timing semantics and deterministic EDF tests;
+   tested);
+4. explicit timing semantics and deterministic EDF tests (implemented and
+   tested locally);
 5. allocator hardening;
 6. bounded structured kernel tracing; and
 7. the Deadline Lab workload and standalone scheduling timeline.

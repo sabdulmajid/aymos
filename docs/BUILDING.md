@@ -9,6 +9,8 @@ The verified host path supports Linux x86_64. The bootstrap requires:
 - Git 2.25 or newer (sparse checkout and partial clone support);
 - curl 7.61 or newer;
 - GNU Make;
+- a system `cc` with C11, AddressSanitizer, and UndefinedBehaviorSanitizer for
+  native policy tests;
 - `cmp`, `env`, `file`, `find`, `grep`, `od`, `readlink`, `sha256sum`, `sort`,
   `stat`, `tar`, `timeout`, `xargs`, and `xz`; and
 - network access during `make setup`.
@@ -102,6 +104,14 @@ make firmware BOARD=nucleo_f401re APP=lifecycle
 
 It uses the same startup, linker map, board support, locked dependencies, and
 ELF validator. Its artifacts are under `build/nucleo_f401re/lifecycle/`.
+
+The deterministic EDF image uses the same kernel and policy:
+
+```sh
+make firmware BOARD=nucleo_f401re APP=edf
+```
+
+Its artifacts are under `build/nucleo_f401re/edf/`.
 
 The Makefile invokes the compiler by its absolute project-local path. Project
 code uses `-Wall -Wextra -Werror` plus additional diagnostics. Vendor code uses
@@ -257,9 +267,9 @@ firmware nevertheless completes HAL initialization and both interrupt smokes.
 The model does not represent every F401RE peripheral or register.
 
 The CI workflow runs setup, firmware validation, host tests, and three fresh
-Renode boots plus three lifecycle scenarios on Ubuntu 24.04, then retains build
-and emulator artifacts even on failure. PR 2's hosted boot workflow passed;
-each stacked PR must rerun its own hosted check.
+Renode boots plus three lifecycle and three EDF scenarios on Ubuntu 24.04, then
+retains build/emulator artifacts even on failure. PR 2's hosted boot workflow
+passed; each stacked PR must rerun its own hosted check.
 
 ## Cortex-M4 lifecycle workflow
 
@@ -297,13 +307,47 @@ observes that the old fixed stack slot was reclaimed, and the idle task proves
 continued PSP execution. Panic output, missing/extra/duplicate/reordered bytes,
 or a timeout fail the test and retain diagnostics.
 
-This is functional Cortex-M4 model evidence. The fixed stack pool is a narrow
-PR 3 mechanism; the educational heap remains unlinked until PR 5. The current
-deadline/priority comparison is not yet the explicit periodic/absolute-deadline
-model or deadline-miss accounting promised by PR 4.
-PR 3 sleep accepts only 1 through `INT32_MAX` ticks so its signed-delta wake
-comparison is valid across wrap; zero and larger intervals are rejected before
-SVC and exercised by the lifecycle workload.
+This is functional Cortex-M4 model evidence. The fixed stack pool remains a
+narrow mechanism; the educational heap is unlinked until PR 5. Sleep accepts
+only 1 through `INT32_MAX` ticks; zero/larger intervals are rejected before SVC
+and exercised by the lifecycle workload.
+
+## Native EDF policy and ARM workload
+
+`make test` includes `make test-native`. The explicit bootstrap compiler is
+system `cc`; its resolved path and full `--version` output are retained in
+`build/native/compiler.txt`. Every `make test-native` rebuilds through temporary
+files and records the resolved/real compiler path, compiler SHA-256,
+full version, exact flags, every project input hash, and resulting binary hash.
+The recipe verifies that final hash before success, so a cached executable cannot
+be paired with new provenance. Strict native tests use ASan/UBSan and link the
+same `kernel/src/scheduler.c` as ARM firmware—not a host reimplementation.
+
+```sh
+make run-edf
+make test-edf
+RENODE_REPEAT=10 make test-edf
+make APP=edf test-emulator-offline
+```
+
+Task 2 releases at tick 0/deadline 50. Periodic task 1 releases at tick
+5/deadline 15, preempts task 2, completes via `os_wait_next_period`, then
+releases on its fixed cadence at tick 20/deadline 30 and preempts again. The
+same fixture constants drive native and Cortex-M tests. Robot and the raw UART
+parser reject missing, duplicate, extra, or reordered semantic lines.
+
+Periodic scheduling is constrained-deadline and single-active-job. At a cadence
+boundary, an unfinished active job receives a deadline miss at equality when
+applicable; the unavailable release is separately counted in
+`missed_release_count`, and cadence advances. It is neither overlapped nor
+recreated from completion time. Execution counters saturate at `UINT32_MAX`;
+configured execution budget is observable but not enforced.
+
+All runtime release, wake, miss, and EDF decisions use a 64-bit monotonic key.
+The 32-bit tick values shown in UART and task info are low-word views only.
+Native fixtures cross `UINT32_MAX`, compare deadlines separated by exactly
+`2^31`, and retain strict order for jobs overdue by more than `2^31` ticks.
+The kernel panics before the monotonic counter could wrap at `UINT64_MAX`.
 
 ## Application and hardware status
 
@@ -314,6 +358,7 @@ application-local flag, emits the smoke result from thread mode, and then
 waits for interrupts. Neither handler prints, schedules, switches context, nor
 uses PSP/PendSV. Select `APP=lifecycle` for the separately tested real kernel
 path; keeping the smoke app independent protects the PR 2 boot regression.
+Select `APP=edf` for explicit periodic timing/EDF behavior.
 
 Physical flashing is not validated. `make flash` builds the binary, prints that
 limitation, and exits nonzero rather than running an undocumented global

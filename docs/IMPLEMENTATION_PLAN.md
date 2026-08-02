@@ -1,8 +1,10 @@
 # AymOS Real-Time Systems Lab implementation plan
 
-Status: PR 1 and PR 2 are unmerged drafts. Both passed independent review; PR 2
-also passed its hosted CI run. PR 3 is implemented and independently approved;
-publication remains conditional on its committed-state provenance run.
+Status: PRs 1 through 3 are unmerged drafts. PRs 1 and 2 passed independent
+review, and PR 2 passed hosted CI. PR 3 is committed at the base used by PR 4
+and passed its independent architecture review. PR 4 is implemented and passed
+two independent timing-policy reviews; its published draft must still record
+the committed-state gate and hosted CI result.
 
 This document defines the first trustworthy vertical slice of AymOS. It is a
 campaign plan, not a claim that the described target behavior exists today.
@@ -452,11 +454,13 @@ will distinguish at least:
 - deadline-miss count;
 - sleeping versus waiting-for-release versus dormant state.
 
-Tick comparisons will use the standard half-range modular rule, expressed in
-one tested helper. Configured delays/deadlines must remain below half the
-`uint32_t` range so ordering is unambiguous. Execution demand in the Deadline
-Lab will be deterministic units driven by guest-visible work/ticks, not host
-wall time.
+Configured relative delays/deadlines remain below half the `uint32_t` range,
+but runtime ordering does not compare wrapped 32-bit values. One 64-bit
+monotonic kernel time qualifies release, wake, and absolute-deadline keys. Due
+checks use ordinary `>=` and EDF uses strict `<` on those keys. The familiar
+32-bit tick values are low-word display fields only. Exhausting `UINT64_MAX` is
+a fail-stop kernel error, not an epoch wrap. Execution demand in the Deadline
+Lab will be deterministic guest-visible work/ticks, not host wall time.
 
 EDF selection will compare eligible jobs by absolute deadline, then explicit
 static priority, then stable TID as the final deterministic tie breaker. Idle is
@@ -667,8 +671,8 @@ network-isolated lifecycle test, the original boot path, forced timeout/process
 cleanup, and input-validation negatives passed. Independent architecture review
 approved the frame, SVC, PSP/MSP, EXC_RETURN, register, priority, state, reclaim,
 ABI, failure, test, documentation, and scope contracts after one blocking sleep
-half-range finding was fixed and retested. Committed-state results remain the
-last publication gate.
+half-range finding was fixed and retested. PR 4 is based exactly on the
+committed PR 3 head `3283e1cf31ae339e8ffd377e65dce9ab0e8305f3`.
 
 ### PR 4: explicit timing model and EDF correctness
 
@@ -692,12 +696,39 @@ Acceptance evidence:
   automated assertion observes the identical semantic selection sequence.
 - Native and ARM results agree on policy fixtures without using a host
   scheduling simulation as the emulator result.
-- Independent review checks modular-time assumptions, simultaneous events,
+- Independent review checks monotonic-time assumptions, simultaneous events,
   boundary ticks, state transitions, deterministic ties, ISR interaction, and
   API documentation.
 
 Gate: the deterministic scheduler sequence must pass before trace explanations
 are trusted.
+
+Local PR 4 implementation evidence (2026-08-02): architecture-neutral
+`kernel/src/scheduler.c` is linked unchanged into ARM firmware and a strict
+native ASan/UBSan test. The native suite covers every fixture above, invalid
+half-range/constrained-deadline configurations, active-release accounting,
+miss persistence, full-wrap boundaries, and the exact ARM fixture. It also
+constructs reachable time-zero task sets whose later periodic deadline is
+exactly `2^31` and more than `2^31` ticks after an active overdue deadline,
+proving strict/asymmetric/stable EDF ordering. Every native invocation rebuilds
+the executable and records the resolved compiler/real path/hash/version, flags,
+input hashes, and binary hash. The public default/config API is separate from
+kernel-owned scheduler state.
+
+The implemented periodic model is constrained-deadline and single-active-job.
+A release boundary reached while its predecessor is active increments an
+observable missed-release counter and advances scheduled cadence; it is neither
+overlapped, silently queued, nor regenerated from completion time. An unfinished
+job is missed at equality with its absolute deadline, once per job. Sleep keeps
+the active job/deadline; completion waits on the established cadence.
+
+`APP=edf` shares fixture constants with native tests and exercises two real
+SysTick release/preemption decisions plus `os_wait_next_period` through
+SVC/PendSV/PSP. The exact semantic UART oracle, boot regression, lifecycle
+regression, repeat run, and network-isolated run are PR 4 publication gates.
+These are functional emulator results, not physical timing, latency, WCET, or
+hard-real-time evidence. Two independent re-reviews approved the final timing,
+overflow, interrupt-context, provenance, test, and documentation contracts.
 
 ### PR 5: allocator hardening
 
@@ -879,7 +910,7 @@ only after its own acceptance evidence exists.
 | Newlib heap | Dynamic newlib allocation is disabled initially so the custom heap is the sole dynamic allocator. | Map and `_sbrk` tests in PR 1; revisit only with demonstrated need. |
 | `printf` in boot path | Avoid dynamic/formatted output where a fixed UART write suffices. | Link/map/runtime check in PRs 1-2. |
 | Exception-frame correctness | Existing assembly is not trusted merely because it links. | Independent architecture review and Renode lifecycle test in PR 3. |
-| Tick wraparound contract | Durations below half the 32-bit range; central modular comparison helper. | Native boundary tests in PR 4. |
+| Tick wraparound contract | Relative durations remain below half the 32-bit range; runtime due/EDF order uses full 64-bit monotonic keys and fails before 64-bit exhaustion. | Native low-word wrap, exact-half, greater-than-half overdue, strict-order, and exhaustion-boundary tests in PR 4. |
 | Allocator ownership on task exit | Deferred stack reclaim is mandatory; automatic release of all other task allocations is undecided. | Explicit policy plus adversarial review in PR 5. |
 | Trace record/wire encoding | Naturally aligned 32-byte records, guest tick/sequence ordering, selection snapshots, drop-new, and terminal loss footer are fixed directions; exact field packing/framing remains open. | Schema review and corrupt-stream tests in PR 6. |
 | Trace perturbation | Events change guest execution cost even without blocking output. Treat results as explanatory ordering, not timing proof. | Record overflow/loss and document in PR 6. |

@@ -699,6 +699,7 @@ check_host() {
     require_command awk
     require_command curl
     require_command cmp
+    require_command cc
     require_command env
     require_command file
     require_command find
