@@ -45,6 +45,33 @@ AymOS combines a small Cortex-M4 kernel with structured execution evidence:
 The implementation stays small on purpose. A developer can follow the path
 from the public C API to the scheduler and then to the context-switch assembly.
 
+## Why use AymOS
+
+AymOS is a complete path for a small, deadline-driven embedded application. A
+developer writes ordinary C task functions, assigns their timing requirements,
+and lets the kernel control processor time. The same run produces a report
+that explains the result.
+
+A typical use case is a device that samples a sensor, updates a controller,
+and sends telemetry at different rates. AymOS keeps these operations separate,
+runs the most urgent ready work first, and records enough state to explain a
+late result.
+
+| Development need | AymOS value |
+| --- | --- |
+| Run several timed operations on one microcontroller | Independent tasks with periods, deadlines, priorities, and stacks |
+| Understand an unexpected task order | Scheduler events include the selected task, candidates, deadlines, and reason |
+| Reproduce a result on another Linux computer | Pinned tools, checked dependencies, fixed workloads, and recorded commands |
+| Test a useful processor-specific workload | A Q15 FIR filter with portable and Cortex-M4 implementations |
+| Extend the kernel with confidence | Native policy tests and ARM firmware checks cover the same core behavior |
+
+To explore the system, change a task function or its `os_task_config_t`
+settings, run the demonstration again, and compare the new timeline with the
+previous run. You can change release times, periods, deadlines, priorities,
+and work demand without changing the scheduler. The
+[scheduling guide](docs/SCHEDULING_DEMO.md) gives the exact entry points and
+commands.
+
 ## Quick start
 
 Use a Linux x86-64 computer with Git, GNU Make, curl, and a C compiler. Then
@@ -136,6 +163,29 @@ execution. AymOS uses that separation as follows:
 This path exercises the Cortex-M4 vector table, SVC, PendSV, SysTick, PSP,
 MSP, exception return, and the EDF scheduler in the board-targeted firmware.
 
+## Engineering highlights
+
+The repository contains several focused systems-engineering examples:
+
+- [Cortex-M4 context switching](arch/arm_cm4/context_switch.S) preserves the
+  task context through SVC and PendSV with separate MSP and PSP stacks.
+- [EDF scheduling](kernel/src/scheduler.c) uses explicit timing fields, a
+  64-bit order across 32-bit tick wrap, deterministic ties, and an idle
+  fallback.
+- [Task lifecycle management](kernel/src/kernel.c) handles initial exception
+  frames, task arguments, returned task functions, and deferred stack reclaim.
+- [Structured tracing](kernel/src/trace.c) writes fixed-size events to a
+  bounded ring without formatted output in interrupt-sensitive paths.
+- [Allocator hardening](kernel/src/allocator.c) provides eight-byte alignment,
+  ownership checks, coalescing, boundary validation, and fragmentation data.
+- [Cortex-M4 DSP](dsp/src/fir_q15_m4.c) uses packed integer operations while a
+  scalar implementation supplies a clear correctness reference.
+- [Reproducible setup](tools/setup.sh) checks tool archives, executable hashes,
+  dependency revisions, and project-local Python packages.
+
+See [Engineering highlights](docs/ENGINEERING_HIGHLIGHTS.md) for the design
+choices, source paths, and tests behind each item.
+
 ## Evidence and quality checks
 
 Each completed run keeps the exact firmware ELF and linker map, build
@@ -163,5 +213,6 @@ Automated checks cover:
 - [Scheduling demonstration](docs/SCHEDULING_DEMO.md)
 - [Fixed-point DSP workload](docs/DSP_WORKLOAD.md)
 - [Kernel functionality](docs/FUNCTIONALITY_OVERVIEW.md)
+- [Engineering highlights](docs/ENGINEERING_HIGHLIGHTS.md)
 - [Trace format](docs/TRACE_FORMAT.md)
 - [Implementation decisions](docs/IMPLEMENTATION_PLAN.md)
