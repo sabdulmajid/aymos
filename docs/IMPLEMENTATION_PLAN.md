@@ -1,9 +1,8 @@
 # AymOS Real-Time Systems Lab implementation plan
 
-Status: PRs 1 through 4 are unmerged drafts and passed their assigned local
-reviews and gates. PR 5 is implemented in its stacked worktree, passed its
-native/ARM gates and independent adversarial review, and now requires only
-committed-state and hosted-CI publication evidence before final review.
+Status: PRs 1 through 4 are merged. PR 5 is implemented at its committed head
+and has passed its native and ARM gates, independent adversarial review,
+committed-state checks, and hosted CI.
 
 This document defines the first trustworthy vertical slice of AymOS. It is a
 campaign plan, not a claim that the described target behavior exists today.
