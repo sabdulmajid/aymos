@@ -9,6 +9,8 @@ readonly renode="${repo_root}/.tools/renode-1.16.1-dotnet-x86_64/renode"
 readonly python="${repo_root}/.tools/python-venv-renode-1.16.1/bin/python3"
 readonly app="${AYMOS_APP:-boot}"
 readonly workload_mode="${AYMOS_WORKLOAD_MODE:-normal}"
+readonly signal_impl="${AYMOS_SIGNAL_IMPL:-scalar}"
+readonly firmware_override="${AYMOS_FIRMWARE_ELF:-}"
 case "${app}" in
     boot)
         uart_validator="${script_dir}/verify_uart.py"
@@ -34,14 +36,22 @@ case "${app}" in
         uart_validator="${script_dir}/verify_deadline_lab_uart.py"
         default_virtual_duration="0.5"
         ;;
+    signal_lab)
+        uart_validator="${script_dir}/verify_signal_lab_uart.py"
+        default_virtual_duration="0.03"
+        ;;
     *)
         printf 'renode-run: unsupported AYMOS_APP: %s\n' "${app}" >&2
         exit 2
         ;;
 esac
 readonly uart_validator default_virtual_duration
-if [[ "${app}" == deadline_lab ]]; then
+if [[ -n "${firmware_override}" ]]; then
+    readonly elf="${firmware_override}"
+elif [[ "${app}" == deadline_lab ]]; then
     readonly elf="${repo_root}/build/nucleo_f401re/${app}/${workload_mode}/aymos.elf"
+elif [[ "${app}" == signal_lab ]]; then
+    readonly elf="${repo_root}/build/nucleo_f401re/${app}/${signal_impl}/aymos.elf"
 else
     readonly elf="${repo_root}/build/nucleo_f401re/${app}/aymos.elf"
 fi
@@ -53,13 +63,32 @@ readonly run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 readonly output_dir="${AYMOS_RENODE_OUTPUT_DIR:-${repo_root}/build/renode/run/${run_id}}"
 readonly uart_capture="${output_dir}/uart.bin"
 readonly emulator_log="${output_dir}/emulator.log"
-readonly monitor_command="\$bin=@${elf}; \$platform=@${platform}; include @${boot_script}; sysbus.usart2 CreateFileBackend @${uart_capture}; emulation RunFor \"${virtual_duration}\"; quit"
+readonly execution_trace="${output_dir}/execution.bin.gz"
+if [[ "${app}" == signal_lab ]]; then
+    readonly trace_start="sysbus.cpu CreateExecutionTracing \"signalTrace\" @${execution_trace} PCAndOpcode true compress=true isSynchronous=true;"
+    readonly trace_stop="sysbus.cpu DisableExecutionTracing;"
+else
+    readonly trace_start=""
+    readonly trace_stop=""
+fi
+readonly monitor_command="\$bin=@${elf}; \$platform=@${platform}; include @${boot_script}; sysbus.usart2 CreateFileBackend @${uart_capture}; ${trace_start} emulation RunFor \"${virtual_duration}\"; ${trace_stop} quit"
 
 validate_inputs() {
+    if [[ -n "${firmware_override}" && "${app}" != signal_lab ]]; then
+        printf '%s\n' \
+            'renode-run: AYMOS_FIRMWARE_ELF is only valid for signal_lab' >&2
+        exit 2
+    fi
     if [[ "${app}" == deadline_lab && "${workload_mode}" != normal &&
           "${workload_mode}" != overload ]]; then
         printf 'renode-run: invalid AYMOS_WORKLOAD_MODE: %s\n' \
             "${workload_mode}" >&2
+        exit 2
+    fi
+    if [[ "${app}" == signal_lab && "${signal_impl}" != scalar &&
+          "${signal_impl}" != m4 ]]; then
+        printf 'renode-run: invalid AYMOS_SIGNAL_IMPL: %s\n' \
+            "${signal_impl}" >&2
         exit 2
     fi
     [[ "${host_timeout}" =~ ^[0-9]+$ ]] && ((host_timeout >= 5 && host_timeout <= 300)) || {
@@ -82,6 +111,11 @@ validate_inputs() {
     [[ "${repo_root}" != *[$'\n\r\t ']* ]] || {
         printf '%s\n' \
             'renode-run: the repository path may not contain whitespace' >&2
+        exit 2
+    }
+    [[ "${elf}" != *[$'\n\r\t ']* ]] || {
+        printf '%s\n' \
+            'renode-run: the firmware path may not contain whitespace' >&2
         exit 2
     }
 }
@@ -131,11 +165,15 @@ renode_build="$(printf '%s' "${renode_build}" | tr '\n' ' ' | sed 's/[[:space:]]
     printf 'app=%s\n' "${app}"
     printf 'workload_mode=%s\n' \
         "$([[ "${app}" == deadline_lab ]] && printf '%s' "${workload_mode}" || printf none)"
+    printf 'signal_impl=%s\n' \
+        "$([[ "${app}" == signal_lab ]] && printf '%s' "${signal_impl}" || printf none)"
     printf 'git_commit=%s\n' "$(git -C "${repo_root}" rev-parse HEAD)"
     printf 'repository_clean=%s\n' \
         "$(test -z "$(git -C "${repo_root}" status --porcelain)" && printf true || printf false)"
     printf 'firmware=%s\n' "${elf}"
     printf 'firmware_sha256=%s\n' "$(sha256sum "${elf}" | awk '{print $1}')"
+    printf 'architecture_flags=-mcpu=cortex-m4 -mthumb -mfloat-abi=soft\n'
+    printf 'float_abi=soft\n'
     printf 'platform=%s\n' "${platform}"
     printf 'platform_sha256=%s\n' "$(sha256sum "${platform}" | awk '{print $1}')"
     printf 'renode_version=1.16.1\n'
@@ -143,7 +181,8 @@ renode_build="$(printf '%s' "${renode_build}" | tr '\n' ' ' | sed 's/[[:space:]]
     printf 'python_version=3.12.13\n'
     printf 'uart_validator_sha256=%s\n' \
         "$(sha256sum "${uart_validator}" | awk '{print $1}')"
-    if [[ "${app}" == trace || "${app}" == deadline_lab ]]; then
+    if [[ "${app}" == trace || "${app}" == deadline_lab || \
+          "${app}" == signal_lab ]]; then
         printf 'trace_schema_version=1\n'
         printf 'trace_framing_version=1\n'
         printf 'trace_record_size=32\n'
@@ -151,6 +190,11 @@ renode_build="$(printf '%s' "${renode_build}" | tr '\n' ' ' | sed 's/[[:space:]]
         printf 'trace_ring_records=256\n'
         printf 'trace_decoder_sha256=%s\n' \
             "$(sha256sum "${repo_root}/tools/aymos_lab/trace.py" | awk '{print $1}')"
+    fi
+    if [[ "${app}" == signal_lab ]]; then
+        printf 'execution_trace_format=ReTrace-v4-PCAndOpcode\n'
+        printf 'execution_trace_compression=gzip\n'
+        printf 'execution_trace_synchronous=true\n'
     fi
     printf 'command_file=command.txt\n'
     printf 'emulator_arguments=--console --disable-gui --plain -e <monitor_command>\n'
@@ -182,6 +226,7 @@ fi
 set +e
 env -u PYTHONHOME -u PYTHONPATH \
     PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 \
+    AYMOS_SIGNAL_IMPL="${signal_impl}" \
     "${python}" "${uart_validator}" "${uart_capture}" \
     > "${output_dir}/uart.txt" 2> "${output_dir}/uart-validation.log"
 status=$?

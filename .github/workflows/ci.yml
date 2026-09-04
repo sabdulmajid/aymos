@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   firmware-and-renode:
-    name: F401RE kernel and Deadline Lab
+    name: F401RE kernel and labs
     runs-on: ubuntu-24.04
     timeout-minutes: 20
 
@@ -29,6 +29,9 @@ jobs:
 
       - name: Check Cortex-M4 DSP instruction selection
         run: make check-dsp-codegen
+
+      - name: Run scalar and M4 Signal Lab once
+        run: make test-signal-lab
 
       - name: Run three clean emulator boots
         run: RENODE_REPEAT=3 make test-emulator
@@ -68,6 +71,8 @@ jobs:
             build/nucleo_f401re/allocator/
             build/nucleo_f401re/trace/
             build/nucleo_f401re/deadline_lab/
+            build/nucleo_f401re/signal_lab/
+            build/signal-lab/evidence/
             build/native/
             build/renode/
             runs/

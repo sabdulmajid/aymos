@@ -6,13 +6,20 @@ PROJECT := aymos
 BOARD ?= nucleo_f401re
 APP ?= boot
 WORKLOAD_MODE ?= normal
+SIGNAL_IMPL ?= scalar
 
 SUPPORTED_BOARDS := nucleo_f401re
-SUPPORTED_APPS := boot lifecycle edf allocator trace deadline_lab
+SUPPORTED_APPS := boot lifecycle edf allocator trace deadline_lab signal_lab
 SUPPORTED_WORKLOAD_MODES := normal overload
+SUPPORTED_SIGNAL_IMPLS := scalar m4
 
 ifeq ($(filter $(BOARD),$(SUPPORTED_BOARDS)),)
 $(error Unsupported BOARD '$(BOARD)'; supported boards: $(SUPPORTED_BOARDS))
+endif
+ifeq ($(APP),signal_lab)
+ifeq ($(filter $(SIGNAL_IMPL),$(SUPPORTED_SIGNAL_IMPLS)),)
+$(error Unsupported SIGNAL_IMPL '$(SIGNAL_IMPL)'; supported implementations: $(SUPPORTED_SIGNAL_IMPLS))
+endif
 endif
 ifeq ($(filter $(APP),$(SUPPORTED_APPS)),)
 $(error Unsupported APP '$(APP)'; supported applications: $(SUPPORTED_APPS))
@@ -67,6 +74,8 @@ HAL_DIR := .deps/stm32f4xx_hal_driver
 
 ifeq ($(APP),deadline_lab)
 BUILD_DIR := build/$(BOARD)/$(APP)/$(WORKLOAD_MODE)
+else ifeq ($(APP),signal_lab)
+BUILD_DIR := build/$(BOARD)/$(APP)/$(SIGNAL_IMPL)
 else
 BUILD_DIR := build/$(BOARD)/$(APP)
 endif
@@ -81,6 +90,7 @@ LINKER_SCRIPT := bsp/nucleo_f401re/stm32f401re.ld
 COMMON_PROJECT_C_SOURCES := \
 	bsp/nucleo_f401re/src/board.c \
 	bsp/nucleo_f401re/src/newlib_heap.c
+DSP_PROJECT_C_SOURCES :=
 
 ifeq ($(APP),boot)
 PROJECT_C_SOURCES := \
@@ -147,6 +157,26 @@ PROJECT_ASM_SOURCES := \
 PROJECT_CPPFLAGS := \
 	-DAYMOS_TRACE_ENABLED=1 \
 	-DAYMOS_DEADLINE_LAB_OVERLOAD=$(if $(filter overload,$(WORKLOAD_MODE)),1,0)
+else ifeq ($(APP),signal_lab)
+PROJECT_C_SOURCES := \
+	apps/signal_lab/main.c \
+	bsp/nucleo_f401re/src/kernel_interrupts.c \
+	kernel/src/allocator.c \
+	kernel/src/kernel.c \
+	kernel/src/scheduler.c \
+	kernel/src/trace.c \
+	kernel/src/trace_runtime.c \
+	$(COMMON_PROJECT_C_SOURCES)
+DSP_PROJECT_C_SOURCES := \
+	dsp/src/fir_q15_common.c \
+	dsp/src/fir_q15_$(SIGNAL_IMPL).c
+PROJECT_ASM_SOURCES := \
+	arch/arm_cm4/context_switch.S
+PROJECT_CPPFLAGS := \
+	-DAYMOS_TRACE_ENABLED=1 \
+	-DAYMOS_SIGNAL_IMPL_M4=$(if $(filter m4,$(SIGNAL_IMPL)),1,0) \
+	-Idsp/include \
+	-Idsp/src
 endif
 
 VENDOR_C_SOURCES := \
@@ -162,11 +192,12 @@ VENDOR_ASM_SOURCES := \
 	$(CMSIS_DEVICE_DIR)/Source/Templates/gcc/startup_stm32f401xe.s
 
 PROJECT_OBJECTS := $(addprefix $(OBJ_DIR)/,$(PROJECT_C_SOURCES:.c=.o))
+DSP_PROJECT_OBJECTS := $(addprefix $(OBJ_DIR)/,$(DSP_PROJECT_C_SOURCES:.c=.o))
 PROJECT_ASM_OBJECTS := $(addprefix $(OBJ_DIR)/,$(PROJECT_ASM_SOURCES:.S=.o))
 VENDOR_C_OBJECTS := $(addprefix $(OBJ_DIR)/,$(VENDOR_C_SOURCES:.c=.o))
 VENDOR_ASM_OBJECTS := $(addprefix $(OBJ_DIR)/,$(VENDOR_ASM_SOURCES:.s=.o))
-OBJECTS := $(VENDOR_ASM_OBJECTS) $(PROJECT_OBJECTS) $(PROJECT_ASM_OBJECTS) \
-	$(VENDOR_C_OBJECTS)
+OBJECTS := $(VENDOR_ASM_OBJECTS) $(PROJECT_OBJECTS) $(DSP_PROJECT_OBJECTS) \
+	$(PROJECT_ASM_OBJECTS) $(VENDOR_C_OBJECTS)
 DEPENDENCY_FILES := $(OBJECTS:.o=.d)
 
 ARCH_FLAGS := -mcpu=cortex-m4 -mthumb -mfloat-abi=soft
@@ -191,6 +222,7 @@ COMMON_CFLAGS := \
 	-fno-strict-aliasing \
 	-g3 \
 	-Og
+override DSP_FIRMWARE_CFLAGS := $(filter-out -Og,$(COMMON_CFLAGS)) -O2
 PROJECT_WARNINGS := \
 	-Wall \
 	-Wextra \
@@ -293,11 +325,12 @@ LDFLAGS := \
 	-Wl,-Map,$(MAP) \
 	-Wl,--cref
 
-.PHONY: firmware lifecycle edf allocator trace deadline-lab demo setup validate test test-native \
+.PHONY: firmware lifecycle edf allocator trace deadline-lab signal-lab demo setup validate test test-native \
 	test-native-scheduler test-native-allocator test-native-trace test-native-dsp \
 	check-dsp-codegen check-dsp-codegen-internal run run-lifecycle run-edf \
 	run-allocator run-trace test-emulator test-emulator-offline test-lifecycle test-edf \
-	test-allocator test-trace test-host-trace test-host-deadline-lab \
+	test-allocator test-trace test-signal-lab test-host-trace test-host-deadline-lab \
+	test-host-signal-lab run-signal-lab \
 	decode-trace \
 	check-renode-platform clean clean-build clean-emulator flash disassembly \
 	help check-setup FORCE
@@ -313,7 +346,7 @@ check-setup:
 check-renode-platform:
 	@./tools/renode/check_platform.sh
 
-test: test-native test-host-trace test-host-deadline-lab check-setup \
+test: test-native test-host-trace test-host-deadline-lab test-host-signal-lab check-setup \
 	check-renode-platform
 	@env -u PYTHONHOME -u PYTHONPATH \
 		PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 \
@@ -329,6 +362,11 @@ test-host-deadline-lab: check-setup
 	@env -u PYTHONHOME -u PYTHONPATH \
 		PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 \
 		$(PYTHON) -m unittest tests.host.test_deadline_lab -v
+
+test-host-signal-lab: check-setup
+	@env -u PYTHONHOME -u PYTHONPATH \
+		PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 \
+		$(PYTHON) -m unittest tests.host.test_signal_lab -v
 
 decode-trace: check-setup
 	@env -u PYTHONHOME -u PYTHONPATH \
@@ -574,6 +612,7 @@ check-dsp-codegen-internal: $(DSP_CODEGEN_COMMON_OBJECT) $(DSP_CODEGEN_M4_OBJECT
 
 run: firmware check-renode-platform
 	@AYMOS_APP="$(APP)" AYMOS_WORKLOAD_MODE="$(WORKLOAD_MODE)" \
+		AYMOS_SIGNAL_IMPL="$(SIGNAL_IMPL)" \
 		./tools/renode/run.sh
 
 run-lifecycle:
@@ -587,6 +626,21 @@ run-allocator:
 
 run-trace:
 	@$(MAKE) --no-print-directory APP=trace run
+
+signal-lab:
+	@$(MAKE) --no-print-directory APP=signal_lab \
+		SIGNAL_IMPL="$(SIGNAL_IMPL)" firmware
+
+run-signal-lab:
+	@$(MAKE) --no-print-directory APP=signal_lab \
+		SIGNAL_IMPL="$(SIGNAL_IMPL)" run
+
+test-signal-lab: check-renode-platform
+	@$(MAKE) --no-print-directory APP=signal_lab SIGNAL_IMPL=scalar firmware
+	@$(MAKE) --no-print-directory APP=signal_lab SIGNAL_IMPL=m4 firmware
+	@env -u PYTHONHOME -u PYTHONPATH \
+		PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 \
+		$(PYTHON) -m tools.aymos_lab.signal_lab test
 
 deadline-lab:
 	@$(MAKE) --no-print-directory APP=deadline_lab \
@@ -632,14 +686,21 @@ test-trace: trace
 	@RENODE_REPEAT="$${RENODE_REPEAT:-3}" AYMOS_APP=trace \
 		./tools/renode/test.sh
 
-$(PROJECT_OBJECTS) $(PROJECT_ASM_OBJECTS) $(VENDOR_C_OBJECTS) \
-	$(VENDOR_ASM_OBJECTS): | check-setup
+$(PROJECT_OBJECTS) $(DSP_PROJECT_OBJECTS) $(PROJECT_ASM_OBJECTS) \
+	$(VENDOR_C_OBJECTS) $(VENDOR_ASM_OBJECTS): | check-setup
 
 $(PROJECT_OBJECTS): $(OBJ_DIR)/%.o: %.c
 	@mkdir -p "$(dir $@)"
 	@printf 'CC(project) %s\n' "$<"
 	@$(CC) $(COMMON_CPPFLAGS) $(COMMON_CFLAGS) $(PROJECT_WARNINGS) \
 		$(PROJECT_CPPFLAGS) \
+		$(DEPENDENCY_FLAGS) -c "$<" -o "$@"
+
+$(DSP_PROJECT_OBJECTS): $(OBJ_DIR)/%.o: %.c
+	@mkdir -p "$(dir $@)"
+	@printf 'CC(dsp-O2)  %s\n' "$<"
+	@$(CC) $(COMMON_CPPFLAGS) $(PROJECT_CPPFLAGS) \
+		$(DSP_FIRMWARE_CFLAGS) $(PROJECT_WARNINGS) -Wconversion \
 		$(DEPENDENCY_FLAGS) -c "$<" -o "$@"
 
 $(VENDOR_C_OBJECTS): $(OBJ_DIR)/%.o: %.c
@@ -689,14 +750,17 @@ $(BUILD_METADATA): FORCE $(ELF) tools/setup/dependencies.lock | check-setup
 		printf 'compiler=%s\n' "$$($(CC) -dumpfullversion)"; \
 		printf 'compiler_path=%s\n' '$(CC)'; \
 		printf 'architecture_flags=%s\n' '$(ARCH_FLAGS)'; \
+		printf 'float_abi=soft\n'; \
+		printf 'dsp_optimization=%s\n' '$(if $(filter signal_lab,$(APP)),-O2,not_applicable)'; \
 		printf 'renode=%s\n' '1.16.1'; \
 		printf 'python=%s\n' '3.12.13'; \
 		printf 'workload_mode=%s\n' '$(if $(filter deadline_lab,$(APP)),$(WORKLOAD_MODE),none)'; \
-		printf 'trace_schema_version=%s\n' '$(if $(filter trace deadline_lab,$(APP)),1,disabled)'; \
-		printf 'trace_framing_version=%s\n' '$(if $(filter trace deadline_lab,$(APP)),1,disabled)'; \
-		printf 'trace_record_size=%s\n' '$(if $(filter trace deadline_lab,$(APP)),32,0)'; \
-		printf 'trace_footer_size=%s\n' '$(if $(filter trace deadline_lab,$(APP)),28,0)'; \
-		printf 'trace_ring_records=%s\n' '$(if $(filter trace deadline_lab,$(APP)),256,0)'; \
+		printf 'signal_impl=%s\n' '$(if $(filter signal_lab,$(APP)),$(SIGNAL_IMPL),none)'; \
+		printf 'trace_schema_version=%s\n' '$(if $(filter trace deadline_lab signal_lab,$(APP)),1,disabled)'; \
+		printf 'trace_framing_version=%s\n' '$(if $(filter trace deadline_lab signal_lab,$(APP)),1,disabled)'; \
+		printf 'trace_record_size=%s\n' '$(if $(filter trace deadline_lab signal_lab,$(APP)),32,0)'; \
+		printf 'trace_footer_size=%s\n' '$(if $(filter trace deadline_lab signal_lab,$(APP)),28,0)'; \
+		printf 'trace_ring_records=%s\n' '$(if $(filter trace deadline_lab signal_lab,$(APP)),256,0)'; \
 		printf 'stm32cube_f4=%s\n' "$$(git -C .deps/stm32cube_f4_core rev-parse HEAD)"; \
 		printf 'cmsis_device_f4=%s\n' "$$(git -C $(CMSIS_DEVICE_DIR) rev-parse HEAD)"; \
 		printf 'stm32f4xx_hal=%s\n' "$$(git -C $(HAL_DIR) rev-parse HEAD)"; \
@@ -736,6 +800,9 @@ help:
 		'make run-edf      Build/run the deterministic two-task EDF scenario' \
 		'make run-allocator  Build/run repeated task-owned allocation scenario' \
 		'make run-trace    Build/run and decode the structured trace scenario' \
+		'make signal-lab SIGNAL_IMPL=scalar|m4  Build one Signal Lab image' \
+		'make run-signal-lab SIGNAL_IMPL=scalar|m4  Run one Signal Lab image' \
+		'make test-signal-lab  Run and compare both Signal Lab images once' \
 		'make deadline-lab WORKLOAD_MODE=normal|overload  Build one lab mode' \
 		'make demo         Run both Deadline Lab modes and create HTML reports' \
 		'make test-emulator Run the bounded Renode/Robot UART boot test' \
@@ -751,6 +818,6 @@ help:
 		'make clean        Remove firmware and emulator build artifacts' \
 		'make flash        Build, then stop with the unvalidated hardware notice' \
 		'' \
-		'Selection: BOARD=nucleo_f401re APP=boot|lifecycle|edf|allocator|trace|deadline_lab'
+		'Selection: BOARD=nucleo_f401re APP=boot|lifecycle|edf|allocator|trace|deadline_lab|signal_lab'
 
 -include $(DEPENDENCY_FILES)

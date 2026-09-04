@@ -37,18 +37,26 @@ These values come from one complete Renode run of each mode. Run `make demo`
 to regenerate them. See [Deadline Lab](docs/DEADLINE_LAB.md) for the workload,
 artifact contract, and measurement boundary.
 
-## DSP foundation (implemented, experimental)
+## Signal Lab (implemented, experimental)
 
 ```sh
 make test-native-dsp
 make check-dsp-codegen
+make test-signal-lab
 ```
 
 The native test checks the scalar and portable paired Q15 FIR functions. The
 object-code check requires `smlald` and `ssat` in the Cortex-M4 function. The
-M4 function is not part of a firmware workload yet. See
-[Cortex-M4 performance lab](docs/PERFORMANCE_LAB.md) for the exact numerical
-contract and evidence limits.
+Signal Lab runs separate scalar and M4 images through the real kernel. Each
+image processes the same four signal frames. The test checks the exact task
+schedule, result checksums, firmware identity, and executed instruction trace.
+The M4 run must execute 3,616 `smlald` instructions and 452 `ssat`
+instructions. Arm GCC also selects 7,232 single-lane `smlalbb` instructions
+from the portable scalar C loop. The evidence proves functional execution. It
+does not measure hardware speed. The one-tick task intervals include `WFI`
+wait time and do not measure CPU-active time. See
+[Cortex-M4 performance lab](docs/PERFORMANCE_LAB.md) for the numerical contract,
+workload, artifacts, and evidence limits.
 
 The canonical target is the STM32F401RE on a NUCLEO-F401RE board:
 
@@ -117,6 +125,9 @@ The canonical target is the STM32F401RE on a NUCLEO-F401RE board:
   workload whose repeated traces are identical.
 - A four-task Deadline Lab with normal and overload modes, exact trace checks,
   run provenance, JSON summaries, and standalone HTML/SVG timelines.
+- A three-task Signal Lab that runs scalar and M4 Q15 FIR images, requires the
+  same fixed input/output CRC contract, and proves the selected instructions
+  execute.
 
 ## Build
 
@@ -239,8 +250,9 @@ must not be reused. Fixed task stacks are deliberately not moved onto this heap
 in PR 5. Ownership metadata is defensive bookkeeping, not hardware memory
 protection or task isolation.
 
-Tracing is enabled for `APP=trace` and `APP=deadline_lab`. Earlier application
-UART contracts remain unchanged. The 8192-byte static ring reduces the
+Tracing is enabled for `APP=trace`, `APP=deadline_lab`, and `APP=signal_lab`.
+Earlier application UART contracts remain unchanged. The 8192-byte static ring
+reduces the
 remaining dynamic heap by the same amount. Producers perform bounded record
 writes under PRIMASK; terminal idle thread mode closes and drains the ring
 before polling UART. `uart.bin`
