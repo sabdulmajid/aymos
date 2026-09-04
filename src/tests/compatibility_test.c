@@ -2,7 +2,6 @@
 #include <stdio.h>
 #include "common.h"
 #include "k_task.h"
-#include "k_mem.h"
 
 volatile int counter = 0;
 volatile int test_counter = 0;

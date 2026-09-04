@@ -2,8 +2,9 @@
 
 This document explains the main modules of AymOS and how they work together. It supplements the information in the README.
 
-> **Status:** `APP=lifecycle` and `APP=edf` link and test the kernel below.
-> `src/memory.c` remains experimental and is not claimed as complete.
+> **Status:** `APP=lifecycle`, `APP=edf`, and `APP=allocator` link and test the
+> kernel below. The allocator core is also compiled unchanged into native
+> ASan/UBSan tests.
 
 ## Kernel
 
@@ -13,8 +14,8 @@ portable policy in `kernel/src/scheduler.c`.
 
 - `os_kernel_init` – initializes task state, the idle task, stack alignment, and
   exception priorities.
-- `os_task_create` – configures a pre-start task in an eight-byte-aligned fixed
-  stack slot.
+- `os_task_create` – configures a pre-start or thread-mode runtime task in an
+  eight-byte-aligned fixed stack slot.
 - `os_kernel_start` – enters the first task through SVC and PendSV.
 - `os_yield`, `os_sleep`, and `os_wait_next_period` – request transitions
   through SVC.
@@ -36,14 +37,24 @@ real ARM firmware; it is not a host scheduler.
 
 ## Memory Management
 
-AymOS provides a small allocator in `src/memory.c`. Blocks are stored in a linked list located directly in the heap. The allocator tracks which task owns each block and merges adjacent free blocks to reduce fragmentation.
+`kernel/src/allocator.c` is a small portable next-fit allocator over the exact
+linker-exported AymOS heap. Every payload is eight-byte aligned. Metadata uses
+`sizeof`, partitions the arena contiguously, and is checked for bounds,
+alignment, markers, state, size, and links before an operation follows it.
+Allocation splits only when the remainder can hold metadata plus an aligned
+payload; free coalesces adjacent blocks.
 
-Important API functions:
-
-- `k_mem_init` – sets up the heap based on the linker symbols for the stack and image end.
-- `k_mem_alloc` – allocates aligned memory, splitting blocks when needed.
-- `k_mem_dealloc` – frees a block and merges neighboring free regions.
-- `k_mem_count_extfrag` – counts how many free blocks are too small for a requested size.
+Kernel wrappers tag blocks with the running task ID and mask interrupts around
+metadata operations. Foreign-owner, invalid, interior, and double frees fail.
+Task return is completed in PendSV on MSP: a bounded owner sweep frees remaining
+buffers before the task ID becomes reusable. Fixed task stacks remain separate
+from the dynamic heap. This prevents outstanding blocks from being inherited by
+the reused slot, but task-ID tags do not detect stale pointers by task
+generation; pointers retained after free or task exit are invalid and must not
+be reused. Statistics expose aligned usage, free/largest blocks, fragment
+counts, a high-water mark, and saturating operation/error counts. Newlib cannot
+contend for the region because its linker interval is empty and `_sbrk` always
+fails. Ownership tags are bookkeeping, not hardware-enforced isolation.
 
 ## Startup and HAL
 
@@ -56,21 +67,23 @@ startup/system files are not linked into the active firmware.
 
 ## Tests
 
-Several small test programs under `src/tests` demonstrate the kernel and memory system:
+Several old, unselected programs under `src/tests` demonstrate early kernel experiments:
 
 - `create_task_test.c` – creates tasks and monitors state transitions.
-- `allocation_timing_test.c` – measures memory allocation performance.
 - `periodic_test.c` – exercises periodic task behaviour.
 
 These files are manual firmware experiments with separate `main` functions;
 they are not selected by the current build and are not an automated test suite.
-The current slice includes automated native scheduler tests plus Renode boot,
-lifecycle, and deterministic EDF tests. Automated allocator coverage remains
-deferred to PR 5; the manual experiments above remain unlinked.
+The current slice includes automated native scheduler and allocator tests plus
+Renode boot, lifecycle, deterministic EDF, and allocator/task-reuse tests. The
+obsolete `k_mem` implementation and its three manual allocator programs were
+retired in PR 5 so the repository does not present two allocator contracts.
 
 ## Next Steps
 
 For the verified workflow, use `make setup`, `make firmware`, `make test`,
-`make test-emulator`, `make test-lifecycle`, and `make test-edf`, then read
+`make test-emulator`, `make test-lifecycle`, `make test-edf`, and
+`make test-allocator`, then read
 `docs/BUILDING.md`. `make run-lifecycle` and `make run-edf` print exact
-guest-generated streams.
+guest-generated streams; `make run-allocator` prints the allocation stress
+contract.

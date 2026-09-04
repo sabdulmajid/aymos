@@ -21,6 +21,10 @@ case "${app}" in
         robot_suite="tests/renode/edf.robot"
         uart_validator="${script_dir}/verify_edf_uart.py"
         ;;
+    allocator)
+        robot_suite="tests/renode/allocator.robot"
+        uart_validator="${script_dir}/verify_allocator_uart.py"
+        ;;
     *)
         printf 'renode-test: unsupported AYMOS_APP: %s\n' "${app}" >&2
         exit 2

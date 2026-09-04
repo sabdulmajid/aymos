@@ -7,7 +7,7 @@ BOARD ?= nucleo_f401re
 APP ?= boot
 
 SUPPORTED_BOARDS := nucleo_f401re
-SUPPORTED_APPS := boot lifecycle edf
+SUPPORTED_APPS := boot lifecycle edf allocator
 
 ifeq ($(filter $(BOARD),$(SUPPORTED_BOARDS)),)
 $(error Unsupported BOARD '$(BOARD)'; supported boards: $(SUPPORTED_BOARDS))
@@ -81,6 +81,7 @@ else ifeq ($(APP),lifecycle)
 PROJECT_C_SOURCES := \
 	apps/lifecycle/main.c \
 	bsp/nucleo_f401re/src/kernel_interrupts.c \
+	kernel/src/allocator.c \
 	kernel/src/kernel.c \
 	kernel/src/scheduler.c \
 	$(COMMON_PROJECT_C_SOURCES)
@@ -91,6 +92,17 @@ else ifeq ($(APP),edf)
 PROJECT_C_SOURCES := \
 	apps/edf/main.c \
 	bsp/nucleo_f401re/src/kernel_interrupts.c \
+	kernel/src/allocator.c \
+	kernel/src/kernel.c \
+	kernel/src/scheduler.c \
+	$(COMMON_PROJECT_C_SOURCES)
+PROJECT_ASM_SOURCES := \
+	arch/arm_cm4/context_switch.S
+else ifeq ($(APP),allocator)
+PROJECT_C_SOURCES := \
+	apps/allocator/main.c \
+	bsp/nucleo_f401re/src/kernel_interrupts.c \
+	kernel/src/allocator.c \
 	kernel/src/kernel.c \
 	kernel/src/scheduler.c \
 	$(COMMON_PROJECT_C_SOURCES)
@@ -157,6 +169,11 @@ NATIVE_BUILD_DIR := build/native
 NATIVE_SCHEDULER_TEST := $(NATIVE_BUILD_DIR)/test_scheduler
 NATIVE_COMPILER_REPORT := $(NATIVE_BUILD_DIR)/compiler.txt
 NATIVE_TEST_SOURCES := kernel/src/scheduler.c tests/native/test_scheduler.c
+NATIVE_ALLOCATOR_TEST := $(NATIVE_BUILD_DIR)/test_allocator
+NATIVE_ALLOCATOR_COMPILER_REPORT := $(NATIVE_BUILD_DIR)/compiler-allocator.txt
+NATIVE_ALLOCATOR_TEST_SOURCES := \
+	kernel/src/allocator.c \
+	tests/native/test_allocator.c
 NATIVE_CFLAGS := \
 	-std=c11 \
 	-O1 \
@@ -183,9 +200,10 @@ LDFLAGS := \
 	-Wl,-Map,$(MAP) \
 	-Wl,--cref
 
-.PHONY: firmware lifecycle edf setup validate test test-native run \
-	run-lifecycle run-edf test-emulator test-emulator-offline test-lifecycle \
-	test-edf \
+.PHONY: firmware lifecycle edf allocator setup validate test test-native \
+	test-native-scheduler test-native-allocator run run-lifecycle run-edf \
+	run-allocator test-emulator test-emulator-offline test-lifecycle test-edf \
+	test-allocator \
 	check-renode-platform clean clean-build clean-emulator flash disassembly \
 	help check-setup FORCE
 
@@ -205,7 +223,9 @@ test: test-native check-setup check-renode-platform
 		PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 \
 		$(PYTHON) -m unittest discover -s tests/renode -p 'test_*.py' -v
 
-test-native: $(NATIVE_TEST_SOURCES) kernel/include/aymos_scheduler.h \
+test-native: test-native-scheduler test-native-allocator
+
+test-native-scheduler: $(NATIVE_TEST_SOURCES) kernel/include/aymos_scheduler.h \
 	kernel/include/aymos_edf_fixture.h FORCE
 	@mkdir -p "$(NATIVE_BUILD_DIR)"
 	@printf 'HOSTCC      %s\n' "$(NATIVE_SCHEDULER_TEST)"
@@ -246,6 +266,47 @@ test-native: $(NATIVE_TEST_SOURCES) kernel/include/aymos_scheduler.h \
 		actual="$$(sha256sum '$(NATIVE_SCHEDULER_TEST)' | awk '{print $$1}')"; \
 		test "$${actual}" = "$${expected}"
 
+test-native-allocator: $(NATIVE_ALLOCATOR_TEST_SOURCES) \
+	kernel/include/aymos_allocator.h FORCE
+	@mkdir -p "$(NATIVE_BUILD_DIR)"
+	@printf 'HOSTCC      %s\n' "$(NATIVE_ALLOCATOR_TEST)"
+	@set -eu; \
+		host_cc="$$(command -v $(HOST_CC))"; \
+		host_cc_real="$$(readlink -f "$${host_cc}")"; \
+		test_tmp='$(NATIVE_ALLOCATOR_TEST).tmp'; \
+		report_tmp='$(NATIVE_ALLOCATOR_COMPILER_REPORT).tmp'; \
+		trap 'rm -f -- "$${test_tmp}" "$${report_tmp}"' EXIT; \
+		{ \
+			printf 'schema=1\n'; \
+			printf 'suite=allocator\n'; \
+			printf 'compiler_command=%s\n' '$(HOST_CC)'; \
+			printf 'compiler_path=%s\n' "$${host_cc}"; \
+			printf 'compiler_realpath=%s\n' "$${host_cc_real}"; \
+			printf 'compiler_sha256=%s\n' \
+				"$$(sha256sum "$${host_cc_real}" | awk '{print $$1}')"; \
+			printf 'flags=%s\n' '$(NATIVE_CFLAGS)'; \
+			printf '%s\n' 'compiler_version_begin'; \
+			"$${host_cc_real}" --version; \
+			printf '%s\n' 'compiler_version_end'; \
+			sha256sum $(NATIVE_ALLOCATOR_TEST_SOURCES) \
+				kernel/include/aymos_allocator.h; \
+		} > "$${report_tmp}"; \
+		"$${host_cc_real}" $(NATIVE_CFLAGS) \
+			$(NATIVE_ALLOCATOR_TEST_SOURCES) -o "$${test_tmp}"; \
+		printf 'binary_sha256=%s\n' \
+			"$$(sha256sum "$${test_tmp}" | awk '{print $$1}')" \
+			>> "$${report_tmp}"; \
+		mv -- "$${test_tmp}" '$(NATIVE_ALLOCATOR_TEST)'; \
+		mv -- "$${report_tmp}" '$(NATIVE_ALLOCATOR_COMPILER_REPORT)'; \
+		trap - EXIT; \
+		ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+		UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+			'$(NATIVE_ALLOCATOR_TEST)'; \
+		expected="$$(awk -F= '/^binary_sha256=/ {print $$2}' \
+			'$(NATIVE_ALLOCATOR_COMPILER_REPORT)')"; \
+		actual="$$(sha256sum '$(NATIVE_ALLOCATOR_TEST)' | awk '{print $$1}')"; \
+		test "$${actual}" = "$${expected}"
+
 run: firmware check-renode-platform
 	@AYMOS_APP="$(APP)" ./tools/renode/run.sh
 
@@ -254,6 +315,9 @@ run-lifecycle:
 
 run-edf:
 	@$(MAKE) --no-print-directory APP=edf run
+
+run-allocator:
+	@$(MAKE) --no-print-directory APP=allocator run
 
 test-emulator: firmware check-renode-platform
 	@AYMOS_APP="$(APP)" ./tools/renode/test.sh
@@ -272,6 +336,12 @@ edf:
 
 test-edf:
 	@$(MAKE) --no-print-directory APP=edf test-emulator
+
+allocator:
+	@$(MAKE) --no-print-directory APP=allocator firmware
+
+test-allocator:
+	@$(MAKE) --no-print-directory APP=allocator test-emulator
 
 $(PROJECT_OBJECTS) $(PROJECT_ASM_OBJECTS) $(VENDOR_C_OBJECTS) \
 	$(VENDOR_ASM_OBJECTS): | check-setup
@@ -366,15 +436,17 @@ help:
 		'make run          Boot the exact F401RE ELF headlessly and print UART' \
 		'make run-lifecycle  Build/run the SVC/PendSV/PSP lifecycle scenario' \
 		'make run-edf      Build/run the deterministic two-task EDF scenario' \
+		'make run-allocator  Build/run repeated task-owned allocation scenario' \
 		'make test-emulator Run the bounded Renode/Robot UART boot test' \
 		'make test-emulator-offline  Repeat the test in a network namespace' \
 		'make test-lifecycle  Assert the ARM lifecycle scenario in Renode' \
 		'make test-edf     Assert the exact ARM EDF sequence in Renode' \
+		'make test-allocator Assert allocator/task-slot reuse in Renode' \
 		'make validate     Re-run ELF, map, ABI, and memory validation' \
 		'make disassembly  Generate an annotated disassembly' \
 		'make clean        Remove firmware and emulator build artifacts' \
 		'make flash        Build, then stop with the unvalidated hardware notice' \
 		'' \
-		'Selection: BOARD=nucleo_f401re APP=boot|lifecycle|edf'
+		'Selection: BOARD=nucleo_f401re APP=boot|lifecycle|edf|allocator'
 
 -include $(DEPENDENCY_FILES)

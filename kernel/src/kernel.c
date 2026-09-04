@@ -52,6 +52,7 @@ static os_task_id_t yield_excluded_task = OS_TASK_ID_INVALID;
 static volatile uint64_t monotonic_ticks;
 static volatile uint32_t reclaim_counter;
 static volatile os_task_id_t last_reclaimed = OS_TASK_ID_INVALID;
+static os_allocator_t memory_allocator;
 static bool initialized;
 static bool running;
 
@@ -71,9 +72,13 @@ static bool valid_exc_return(uint32_t exc_return);
 static bool valid_saved_psp(os_task_id_t id, const uint32_t *psp);
 static bool valid_svc_frame(const uint32_t *frame, uint32_t exc_return);
 static void reclaim_exiting_task(os_task_id_t id);
+static bool caller_is_running_task(void);
 
 int os_kernel_init(void)
 {
+    extern uint8_t __aymos_heap_end__;
+    extern uint8_t __aymos_heap_start__;
+
     if (initialized || running) {
         return 0;
     }
@@ -99,6 +104,14 @@ int os_kernel_init(void)
     current_task = OS_TASK_ID_INVALID;
     yield_excluded_task = OS_TASK_ID_INVALID;
     os_arch_has_active_context = 0U;
+
+    const uintptr_t heap_begin = (uintptr_t)&__aymos_heap_start__;
+    const uintptr_t heap_end = (uintptr_t)&__aymos_heap_end__;
+    if (heap_end <= heap_begin ||
+        !os_allocator_init(&memory_allocator, (void *)heap_begin,
+                           (size_t)(heap_end - heap_begin))) {
+        os_kernel_panic("HEAP_INIT");
+    }
 
     SCB->CCR |= SCB_CCR_STKALIGN_Msk;
     HAL_NVIC_SetPriority(SVCall_IRQn, OS_PRIORITY_SVC >> 4U, 0U);
@@ -130,11 +143,21 @@ os_task_config_t os_task_config_default(os_task_entry_t entry, void *argument)
 
 int os_task_create(const os_task_config_t *config, os_task_id_t *created_id)
 {
-    if (!initialized || running || config == NULL || created_id == NULL ||
+    if (!initialized || config == NULL || created_id == NULL ||
         config->entry == NULL || config->stack_size < OS_MIN_STACK_SIZE ||
         config->stack_size > OS_MAX_STACK_SIZE ||
         (config->stack_size & 7U) != 0U ||
-        !os_sched_config_valid(&config->timing)) {
+        !os_sched_config_valid(&config->timing) || __get_IPSR() != 0U ||
+        (running &&
+         (!caller_is_running_task() || current_task == OS_TASK_ID_IDLE))) {
+        return 0;
+    }
+
+    const uint32_t saved_primask = __get_PRIMASK();
+    __disable_irq();
+    if (running &&
+        (!caller_is_running_task() || current_task == OS_TASK_ID_IDLE)) {
+        __set_PRIMASK(saved_primask);
         return 0;
     }
 
@@ -147,6 +170,7 @@ int os_task_create(const os_task_config_t *config, os_task_id_t *created_id)
         }
     }
     if (id == OS_TASK_ID_INVALID) {
+        __set_PRIMASK(saved_primask);
         return 0;
     }
 
@@ -156,14 +180,22 @@ int os_task_create(const os_task_config_t *config, os_task_id_t *created_id)
     tasks[id].stack_low = stacks[id].words;
     tasks[id].stack_high =
         stacks[id].words + (config->stack_size / sizeof(uint32_t));
-    tasks[id].saved_psp = build_initial_frame(id);
     if (!os_sched_task_configure(&schedules[id], &config->timing,
                                  monotonic_ticks)) {
-        os_kernel_panic("CREATE_TIMING");
+        reset_task(id);
+        __set_PRIMASK(saved_primask);
+        return 0;
     }
+    tasks[id].saved_psp = build_initial_frame(id);
     *created_id = id;
 
+    if (running && schedules[id].state == OS_TASK_READY &&
+        os_sched_outranks(&schedules[id], &schedules[current_task])) {
+        request_pendsv();
+    }
+
     verify_state("CREATE");
+    __set_PRIMASK(saved_primask);
     return 1;
 }
 
@@ -282,6 +314,77 @@ int os_task_info(os_task_id_t id, os_task_info_t *info)
     info->job_active = schedules[id].job_active;
     __set_PRIMASK(saved_primask);
     return 1;
+}
+
+void *os_memory_alloc(size_t size)
+{
+    if (__get_IPSR() != 0U || !caller_is_running_task() ||
+        current_task == OS_TASK_ID_IDLE) {
+        return NULL;
+    }
+    const uint32_t saved_primask = __get_PRIMASK();
+    __disable_irq();
+    void *result = NULL;
+    if (caller_is_running_task() && current_task != OS_TASK_ID_IDLE) {
+        result = os_allocator_alloc(&memory_allocator, size,
+                                    (os_memory_owner_t)current_task);
+    }
+    __set_PRIMASK(saved_primask);
+    return result;
+}
+
+int os_memory_free(void *pointer)
+{
+    if (__get_IPSR() != 0U || !caller_is_running_task() ||
+        current_task == OS_TASK_ID_IDLE) {
+        return 0;
+    }
+    const uint32_t saved_primask = __get_PRIMASK();
+    __disable_irq();
+    bool result = false;
+    if (caller_is_running_task() && current_task != OS_TASK_ID_IDLE) {
+        result = os_allocator_free(&memory_allocator, pointer,
+                                   (os_memory_owner_t)current_task);
+    }
+    __set_PRIMASK(saved_primask);
+    return result ? 1 : 0;
+}
+
+int os_memory_stats(os_memory_stats_t *stats)
+{
+    if (!initialized || __get_IPSR() != 0U || stats == NULL) {
+        return 0;
+    }
+    const uint32_t saved_primask = __get_PRIMASK();
+    __disable_irq();
+    const bool result = os_allocator_get_stats(&memory_allocator, stats);
+    __set_PRIMASK(saved_primask);
+    return result ? 1 : 0;
+}
+
+size_t os_memory_count_fragments(size_t requested_size)
+{
+    if (!initialized || __get_IPSR() != 0U) {
+        return 0U;
+    }
+    const uint32_t saved_primask = __get_PRIMASK();
+    __disable_irq();
+    const size_t result =
+        os_allocator_count_fragments(&memory_allocator, requested_size);
+    __set_PRIMASK(saved_primask);
+    return result;
+}
+
+bool os_memory_validate(void)
+{
+    if (!initialized || __get_IPSR() != 0U) {
+        return false;
+    }
+    const uint32_t saved_primask = __get_PRIMASK();
+    __disable_irq();
+    const bool result = os_allocator_validate(&memory_allocator);
+    __set_PRIMASK(saved_primask);
+    return result;
 }
 
 bool os_thread_uses_psp(void)
@@ -626,8 +729,23 @@ static void reclaim_exiting_task(os_task_id_t id)
         schedules[id].state != OS_TASK_EXITING || !tasks[id].stack_claimed) {
         os_kernel_panic("RECLAIM");
     }
+    if (!os_allocator_validate(&memory_allocator)) {
+        os_kernel_panic("HEAP_RECLAIM");
+    }
+    (void)os_allocator_release_owner(&memory_allocator,
+                                     (os_memory_owner_t)id);
+    if (!os_allocator_validate(&memory_allocator)) {
+        os_kernel_panic("HEAP_RELEASE");
+    }
     transition_task(id, OS_TASK_EXITING, OS_TASK_DORMANT, "RECLAIM_STATE");
     reset_task(id);
     last_reclaimed = id;
     ++reclaim_counter;
+}
+
+static bool caller_is_running_task(void)
+{
+    return running && current_task < OS_TASK_COUNT &&
+           schedules[current_task].state == OS_TASK_RUNNING &&
+           os_arch_has_active_context != 0U;
 }
