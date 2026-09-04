@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   firmware-and-renode:
     name: F401RE kernel and labs
@@ -16,7 +20,9 @@ jobs:
 
     steps:
       - name: Check out the repository
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install locked project-local dependencies
         run: make setup
@@ -30,36 +36,30 @@ jobs:
       - name: Check Cortex-M4 DSP instruction selection
         run: make check-dsp-codegen
 
-      - name: Run scalar and M4 Signal Lab once
-        run: make test-signal-lab
+      - name: Run one clean emulator boot
+        run: make test-emulator
 
-      - name: Run three clean emulator boots
-        run: RENODE_REPEAT=3 make test-emulator
+      - name: Run one ARM kernel lifecycle scenario
+        run: make test-lifecycle
 
-      - name: Build and run three ARM kernel lifecycle scenarios
-        run: |
-          make lifecycle
-          RENODE_REPEAT=3 make test-lifecycle
+      - name: Run one deterministic ARM EDF scenario
+        run: make test-edf
 
-      - name: Build and run three deterministic ARM EDF scenarios
-        run: |
-          make edf
-          RENODE_REPEAT=3 make test-edf
+      - name: Run one allocator and task-reuse scenario
+        run: make test-allocator
 
-      - name: Build and run repeated allocator/task-reuse scenarios
-        run: |
-          make allocator
-          RENODE_REPEAT=3 make test-allocator
-
-      - name: Build, decode, and compare three structured ARM traces
+      - name: Build, decode, and check one structured ARM trace
         run: make test-trace
 
       - name: Run the normal and overload Deadline Lab
         run: make demo
 
+      - name: Run both Signal Lab images and create the report
+        run: make demo-dsp
+
       - name: Retain firmware and emulator diagnostics
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: aymos-f401re-renode-${{ github.run_id }}
           if-no-files-found: warn

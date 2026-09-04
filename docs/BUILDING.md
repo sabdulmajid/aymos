@@ -122,7 +122,8 @@ make run-trace
 make test-trace
 ```
 
-`make test-trace` defaults to three independent executions. Every attempt must
+`make test-trace` defaults to one execution. Set `RENODE_REPEAT=N` for a
+manual repetition gate. Every attempt must
 first satisfy the exact 102-record workload oracle, including the coalesced
 runtime-create/SysTick request, its actual committed switch pair, three
 idle-to-user preemptions, task-slot reuse, task/deadline identities, footer
@@ -142,6 +143,46 @@ The firmware paths are under
 `build/nucleo_f401re/deadline_lab/<mode>/`. The checked run artifacts are under
 `runs/<run-id>/<mode>/`. See [DEADLINE_LAB.md](DEADLINE_LAB.md) for the task
 configuration and artifact contract.
+
+The Signal Lab builds, runs, checks, and reports both FIR implementations:
+
+```sh
+make demo-dsp
+```
+
+Use an existing successful Signal Lab gate for a fast report-only step:
+
+```sh
+make report-dsp
+```
+
+The first command calls `make test-signal-lab` once. It creates one complete
+report under `runs/<UTC-id>-<commit>-signal/`. The second command reads
+`build/signal-lab/evidence/` and does not rerun Renode. The report validates
+every input size and SHA-256 before it copies the evidence. It rejects unknown,
+missing, changed, or oversized inputs. The report directory contains:
+
+```text
+metadata.json
+workload.json
+summary.json
+comparison.html
+comparison.svg
+scalar/
+m4/
+```
+
+Each implementation directory contains the exact ELF, map, build metadata,
+UART files, structured trace, result, execution summary and compressed trace,
+emulator log, command, and run metadata. `metadata.json` hashes each copied or
+generated artifact except itself and the report control marker. Publication
+uses a marked directory and one same-file-system rename. A failed publication
+does not expose a partial report. Retention removes only old, complete, marked
+Signal Lab report runs. It keeps Deadline Lab and unmarked paths.
+The report path uses Linux directory descriptors and no-follow file opens. It
+rechecks an owned directory after a private rename before retention removes
+it. Retention checks Linux mount IDs and devices before removal. It refuses to
+cross an ordinary or bind mount boundary.
 
 The Makefile invokes the compiler by its absolute project-local path. Project
 code uses `-Wall -Wextra -Werror` plus additional diagnostics. Vendor code uses
@@ -297,15 +338,16 @@ HAL clock initialization. Those warnings are retained in `emulator.log`; the
 firmware nevertheless completes HAL initialization and both interrupt smokes.
 The model does not represent every F401RE peripheral or register.
 
-The CI workflow runs setup, firmware validation, host tests, and three fresh
-Renode boots plus three lifecycle, EDF, allocator, and trace scenarios on Ubuntu 24.04, then
-retains build/emulator artifacts even on failure. PR 2's hosted boot workflow
-passed; each stacked PR must rerun its own hosted check.
+The CI workflow runs setup, firmware validation, host tests, and one boot,
+lifecycle, EDF, allocator, and trace scenario on Ubuntu 24.04. It also runs the
+two Deadline Lab modes and one scalar/M4 Signal Lab report gate. It retains
+build, emulator, and report artifacts even on failure. Set `RENODE_REPEAT=N`
+for a manual repeated gate.
 
 ## Structured trace workflow
 
 `APP=trace` runs the real SVC/PendSV/PSP/SysTick kernel and produces a binary
-UART trace. It is not a host scheduler simulation. The finite workload covers
+UART trace. It is not a host-side scheduler substitute. The finite workload covers
 runtime task creation and delayed releases, a coalesced runtime/SysTick
 preemption, voluntary yield, two sleeps and wakes, idle resumption, explicit
 allocation/free, met and missed deadlines, safe returns/reclamation, task-slot

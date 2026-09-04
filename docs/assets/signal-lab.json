@@ -1,0 +1,262 @@
+{
+  "board": "nucleo_f401re",
+  "evidence_boundary": "Functional emulator instruction and scheduling evidence only. No speed, cycle, latency, WCET, or physical performance claim.",
+  "instruction_evidence": {
+    "m4": {
+      "function": "aymos_fir_q15_m4",
+      "function_instruction_hits": 60252,
+      "packed_smlald": 3616,
+      "products_covered": 7232,
+      "ssat": 452
+    },
+    "scalar": {
+      "function": "aymos_fir_q15_scalar",
+      "function_instruction_hits": 42140,
+      "single_lane_smlalbb": 7232
+    }
+  },
+  "result": {
+    "frames": 4,
+    "input_crc32": 212824829,
+    "output_crc32": 2948757441,
+    "samples_per_frame": 128,
+    "seed": 439041101,
+    "status": "PASS",
+    "taps": 16,
+    "total_outputs": 452,
+    "valid_outputs_per_frame": 113,
+    "work_units": 7232
+  },
+  "schedule": {
+    "deadlines_met": [
+      {
+        "absolute_deadline": 3,
+        "job": 1,
+        "task": 1,
+        "tick": 1
+      },
+      {
+        "absolute_deadline": 4,
+        "job": 1,
+        "task": 2,
+        "tick": 2
+      },
+      {
+        "absolute_deadline": 5,
+        "job": 1,
+        "task": 3,
+        "tick": 3
+      },
+      {
+        "absolute_deadline": 9,
+        "job": 2,
+        "task": 1,
+        "tick": 7
+      },
+      {
+        "absolute_deadline": 10,
+        "job": 2,
+        "task": 2,
+        "tick": 8
+      },
+      {
+        "absolute_deadline": 11,
+        "job": 2,
+        "task": 3,
+        "tick": 9
+      },
+      {
+        "absolute_deadline": 15,
+        "job": 3,
+        "task": 1,
+        "tick": 13
+      },
+      {
+        "absolute_deadline": 16,
+        "job": 3,
+        "task": 2,
+        "tick": 14
+      },
+      {
+        "absolute_deadline": 17,
+        "job": 3,
+        "task": 3,
+        "tick": 15
+      },
+      {
+        "absolute_deadline": 21,
+        "job": 4,
+        "task": 1,
+        "tick": 19
+      },
+      {
+        "absolute_deadline": 22,
+        "job": 4,
+        "task": 2,
+        "tick": 20
+      },
+      {
+        "absolute_deadline": 23,
+        "job": 4,
+        "task": 3,
+        "tick": 21
+      }
+    ],
+    "final_tick": 21,
+    "intervals": [
+      {
+        "end": 1,
+        "start": 0,
+        "task": 1
+      },
+      {
+        "end": 2,
+        "start": 1,
+        "task": 2
+      },
+      {
+        "end": 3,
+        "start": 2,
+        "task": 3
+      },
+      {
+        "end": 6,
+        "start": 3,
+        "task": 0
+      },
+      {
+        "end": 7,
+        "start": 6,
+        "task": 1
+      },
+      {
+        "end": 8,
+        "start": 7,
+        "task": 2
+      },
+      {
+        "end": 9,
+        "start": 8,
+        "task": 3
+      },
+      {
+        "end": 12,
+        "start": 9,
+        "task": 0
+      },
+      {
+        "end": 13,
+        "start": 12,
+        "task": 1
+      },
+      {
+        "end": 14,
+        "start": 13,
+        "task": 2
+      },
+      {
+        "end": 15,
+        "start": 14,
+        "task": 3
+      },
+      {
+        "end": 18,
+        "start": 15,
+        "task": 0
+      },
+      {
+        "end": 19,
+        "start": 18,
+        "task": 1
+      },
+      {
+        "end": 20,
+        "start": 19,
+        "task": 2
+      },
+      {
+        "end": 21,
+        "start": 20,
+        "task": 3
+      }
+    ],
+    "record_count": 103,
+    "releases": [
+      {
+        "absolute_deadline": 3,
+        "job": 1,
+        "task": 1,
+        "tick": 0
+      },
+      {
+        "absolute_deadline": 4,
+        "job": 1,
+        "task": 2,
+        "tick": 1
+      },
+      {
+        "absolute_deadline": 5,
+        "job": 1,
+        "task": 3,
+        "tick": 2
+      },
+      {
+        "absolute_deadline": 9,
+        "job": 2,
+        "task": 1,
+        "tick": 6
+      },
+      {
+        "absolute_deadline": 10,
+        "job": 2,
+        "task": 2,
+        "tick": 7
+      },
+      {
+        "absolute_deadline": 11,
+        "job": 2,
+        "task": 3,
+        "tick": 8
+      },
+      {
+        "absolute_deadline": 15,
+        "job": 3,
+        "task": 1,
+        "tick": 12
+      },
+      {
+        "absolute_deadline": 16,
+        "job": 3,
+        "task": 2,
+        "tick": 13
+      },
+      {
+        "absolute_deadline": 17,
+        "job": 3,
+        "task": 3,
+        "tick": 14
+      },
+      {
+        "absolute_deadline": 21,
+        "job": 4,
+        "task": 1,
+        "tick": 18
+      },
+      {
+        "absolute_deadline": 22,
+        "job": 4,
+        "task": 2,
+        "tick": 19
+      },
+      {
+        "absolute_deadline": 23,
+        "job": 4,
+        "task": 3,
+        "tick": 20
+      }
+    ]
+  },
+  "schema_version": 1,
+  "source_commit": "d36d3aa15b59d46b7da4a9d8fbea5ab781468cf9",
+  "trace_schema_version": 1
+}

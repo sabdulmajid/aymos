@@ -100,6 +100,70 @@ make run-signal-lab SIGNAL_IMPL=m4
 
 The complete comparison gate is `make test-signal-lab`.
 
+## Create the comparison report
+
+Run both images once and publish one report:
+
+```sh
+make demo-dsp
+```
+
+Create another report from the existing validated evidence:
+
+```sh
+make report-dsp
+```
+
+The report-only command does not run Renode. It reads
+`build/signal-lab/evidence/`. It requires the fixed result and the exact common
+103-record trace. It verifies every artifact byte count and SHA-256 before it
+uses the artifact. It rejects a missing, unknown, changed, oversized, or
+nonregular input.
+
+The report command creates:
+
+```text
+runs/<UTC-id>-<commit>-signal/
+  metadata.json
+  workload.json
+  summary.json
+  comparison.html
+  comparison.svg
+  scalar/
+  m4/
+```
+
+Each implementation directory contains the exact 14-file Signal Lab evidence
+set. The top metadata hashes each copied and generated report artifact except
+itself and the control marker. A marked stage becomes visible through one
+same-file-system rename. The tool keeps eight complete marked Signal Lab
+reports. It does not remove Deadline Lab runs, active stages, or unmarked
+paths.
+
+The report path supports Linux. It anchors evidence and report directories with
+open directory descriptors. It rejects symbolic-link leaves. Retention moves
+an owned report to a private name, rechecks its marker and inode, and removes
+entries relative to the held descriptor. A concurrent path replacement does
+not redirect a read or removal outside the owned directory. Retention checks
+the Linux mount ID and device of each directory before it removes any entry.
+It refuses ordinary and bind-mounted child trees. It restores the original
+report name when safe, or leaves the report under its private quarantine name.
+
+The report shows these executed instruction records:
+
+- scalar: 7,232 single-lane `smlalbb` operations and 42,140 total FIR-body
+  instruction records;
+- M4: 3,616 packed `smlald` operations, which cover 7,232 products, 452
+  `ssat` operations, and 60,252 total FIR-body instruction records.
+
+The packed multiply-accumulate count is half the single-lane count. The M4
+function has more total FIR-body records in this first path. This comparison
+does not establish whole-function efficiency.
+
+The report also shows the common scheduled task-state timeline. The bars show
+the task state that the scheduler selected. They include the task wait at the
+tick boundary. They do not show CPU-active time.
+
 ## FIR contract
 
 Include `dsp/include/aymos_fir_q15.h`.
@@ -137,6 +201,7 @@ uses `WFI` after it completes its work and waits for that tick boundary. The
 reported RUNNING interval therefore includes wait time. It is not CPU-active
 time and it is not a performance measurement.
 
-The next change will generate a small standalone scalar-versus-DSP comparison
-report and representative README artifacts. Physical-board cycle measurement
-stays in a later milestone.
+The README includes a small representative SVG and JSON document from the
+validated source commit `d36d3aa15b59d46b7da4a9d8fbea5ab781468cf9`.
+The source boundary is the completed and hashed PR 2 evidence. Physical-board
+cycle measurement stays in a later milestone.

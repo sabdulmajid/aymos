@@ -1,14 +1,13 @@
 # AymOS Real-Time Systems Lab implementation plan
 
-Status: PRs 1 through 6 are merged. PR 7 is implemented on top of PR 6. Its
-focused host checks and one real normal and overload run pass. Independent
-review is approved. Committed-state evidence passes. Hosted CI remains the
-publication gate.
+Status: PRs 1 through 7 are merged. Performance PRs 1 and 2 are merged as PRs
+16 and 17. Performance PR 3 is implemented and its independent review is
+approved. A committed-head `make demo-dsp` run is the publication gate.
 
-This document defines the first trustworthy vertical slice of AymOS. It is a
-campaign plan, not a claim that the described target behavior exists today.
-Each pull request (PR) must update the README and this document when evidence
-changes a design decision.
+This document defines the first trustworthy vertical slice of AymOS and its
+focused DSP extension. Completed sections include their evidence. Planned
+sections are not claims of current behavior. Each pull request (PR) must update
+the README and this document when evidence changes a design decision.
 
 ### Feasibility review record
 
@@ -586,7 +585,8 @@ Base: PR 1 head.
 
 Scope is a pinned local Renode, minimal F401RE platform, headless runner,
 USART2 capture, stable `AYMOS READY` banner, timeout/failure diagnostics,
-emulator test, and CI-equivalent command. Kernel simulation is a non-goal.
+emulator test, and CI-equivalent command. A host-side kernel substitute is a
+non-goal.
 
 Acceptance evidence:
 
@@ -696,7 +696,7 @@ Acceptance evidence:
 - The same predefined two-task workload runs repeatedly in Renode and an
   automated assertion observes the identical semantic selection sequence.
 - Native and ARM results agree on policy fixtures without using a host
-  scheduling simulation as the emulator result.
+  scheduler substitute as the emulator result.
 - Independent review checks monotonic-time assumptions, simultaneous events,
   boundary ticks, state transitions, deterministic ties, ISR interaction, and
   API documentation.
@@ -1052,9 +1052,8 @@ only the scalar and portable paired functions. PR 2 owns M4 result equivalence.
 
 ### Performance PR 2: board-targeted DSP workload
 
-Status: implemented; independent review approved. It depends on Performance PR
-1. The two-variant gate must run again from the committed head before
-publication.
+Status: merged as PR 17; independent review and hosted CI approved. It depends
+on Performance PR 1. The committed-head two-variant publication gate passed.
 
 - Add a three-task deterministic signal-processing workload to the existing
   lab. Process four 128-sample frames with a 16-tap FIR.
@@ -1115,25 +1114,97 @@ Cortex-M4 soft-float `-O2` flags.
 After these changes, 17 focused host tests pass. Both scalar and M4 firmware
 images compile and pass ELF, vector, memory-map, and soft-float validation.
 `git diff --check`, Python syntax, and shell syntax checks pass. The independent
-review approved the frozen diff. The final `make test-signal-lab` run belongs
-to the committed-head publication step so its retained hashes identify the
-published source.
+review approved the frozen diff. The committed-head `make test-signal-lab`
+gate and the hosted PR 17 CI run passed before merge. The merged source commit
+is `d36d3aa15b59d46b7da4a9d8fbea5ab781468cf9`.
 
 ### Performance PR 3: comparison report and project presentation
 
-Status: planned. It depends on Performance PR 2.
+Status: implemented; independent review approved. It depends on merged PR 17.
+A committed-head `make demo-dsp` run is the publication gate.
 
-- Generate one standalone scalar-versus-DSP comparison report.
-- Keep each run in a bounded layout with firmware, configuration, trace,
-  checksum, code-generation evidence, and tool metadata.
+- Validate the complete PR 2 summary schema and every declared artifact byte
+  count and SHA-256 before report generation.
+- Require fixed scalar/M4 result equality and byte-identical structured traces.
+- Generate standalone HTML and SVG with no runtime web dependency.
+- Keep each complete run in a bounded layout with both exact firmware evidence
+  sets, workload, summary, comparison, provenance, and artifact hashes.
+- Publish through a marked atomic stage. Retain eight complete marked Signal
+  Lab reports without removing Deadline Lab or unmarked paths.
 - Add one representative SVG and JSON result to the README.
-- Modernize CI for the focused native, object-code, and firmware Signal Lab
-  gates. Do not add repeated long runs.
+- Modernize CI with immutable action pins, cancellation for superseded runs,
+  and one execution of each exact firmware oracle. Keep manual repetition
+  through `RENODE_REPEAT=N`.
 - Rewrite the README in ASD-STE100-style direct English. Separate verified,
-  experimental, planned, and hardware-only behavior.
+  experimental, planned, and hardware-not-validated behavior.
 
-The report will explain numerical results and observed firmware scheduling. It
-will not turn emulator ordering into a hardware timing claim. DWT cycle counts
+Acceptance gate:
+
+```sh
+make test-host-performance-report
+make report-dsp
+make demo-dsp
+```
+
+The first two commands are fast and do not rerun firmware. The final command
+must run once from the reviewed committed head. It reuses one
+`make test-signal-lab` gate and publishes one report.
+
+Both implementations produce 452 outputs and pass the fixed output CRC-32
+contract `0xAFC277C1`. The report shows 7,232 scalar single-lane `smlalbb`
+operations. It shows 3,616 packed `smlald`
+operations covering 7,232 products and 452 `ssat` operations. It also shows
+42,140 scalar and 60,252 M4 total FIR-body instruction records. The report
+states that the lower packed MAC count does not establish whole-function
+efficiency.
+
+Focused tests cover valid rendering, malformed schema, size/hash mutation,
+result/trace mutation, symlink and unexpected paths, complete publication,
+failure cleanup, output hashes, and selective pruning. Independent review
+verified these checks before the final dynamic gate.
+
+The first independent review found five issues. JSON equality accepted Python
+numeric coercion. Report text made claims about output values and complete
+firmware images too broadly. Retention could preserve nine reports when the
+current clock moved backward. The hash test changed the file length before it
+reached SHA-256 validation. Path checks did not hold directory identities
+through reads and removal.
+
+The correction uses recursive exact-type equality. JSON parsing rejects
+duplicate keys and non-finite constants. Rehashed Boolean and floating-point
+mutations fail for summary, trace, result, and execution fields. Report text
+now says that each implementation produces 452 outputs and passes the same
+fixed CRC contract. Retention always preserves the current report plus the
+newest seven other owned reports. A same-length byte mutation reaches and
+fails the SHA-256 check.
+
+Evidence and report directories now remain open through Linux directory
+descriptors. Leaf opens use `O_NOFOLLOW`. Retention moves an owned candidate to
+a private name, rechecks its inode and marker, and removes entries relative to
+held descriptors. Injected root and prune namespace swaps neither read nor
+remove an external path.
+
+Re-review found two remaining gaps. Publication now opens the repository once
+and walks every lexical evidence component with `O_DIRECTORY` and
+`O_NOFOLLOW`. It passes the held final descriptor into the complete validator.
+An injected replacement of the intermediate `build/signal-lab` path cannot
+redirect the read. Retention now checks both `st_dev` and the Linux mount ID
+from `/proc/self/fdinfo` for every child directory before it removes any entry.
+It refuses ordinary and bind mount boundaries, then restores the original name
+or leaves the report quarantined. An injected mount-ID change causes no unlink.
+Eighteen focused report tests pass after these fixes. Final independent
+re-review approved these corrections.
+
+The report-only path independently decodes the UART trace and result. It also
+rechecks the compressed execution stream and exact ELF with pinned `objdump`.
+The validated PR 17 evidence produces one complete 32-file manifest plus top
+metadata and its control marker. The representative assets use source commit
+`d36d3aa15b59d46b7da4a9d8fbea5ab781468cf9`. The final task deadline at tick
+23 remains inside the SVG domain while scheduled task-state bars end at tick
+21. A committed-head `make demo-dsp` run is the publication gate.
+
+The report explains numerical results and observed firmware scheduling. It
+does not turn emulator ordering into a hardware timing claim. DWT cycle counts
 and physical-board measurement move to a later milestone. GPU support,
 hard-float context switching, and a general benchmark framework remain deferred
 because they do not improve this DSP slice.
