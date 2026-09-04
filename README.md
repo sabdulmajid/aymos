@@ -8,6 +8,34 @@ explicit, wrap-safe EDF timing policy to a deterministic periodic workload.
 Task-owned dynamic memory now uses the same hardened educational allocator in
 native sanitizer tests and real Cortex-M4 firmware. A bounded structured trace
 explains the same guest kernel's decisions without UART in producer paths.
+The Deadline Lab now turns those parts into one visible workload and a
+standalone scheduling report.
+
+## Deadline Lab
+
+```sh
+make setup
+make demo
+```
+
+`make demo` builds and runs normal and overload firmware. Both images use the
+real Cortex-M4 kernel path. The command checks each structured trace and writes
+standalone HTML reports under `runs/<run-id>/`.
+
+The normal workload completes eight jobs with no deadline miss. The overload
+workload changes only the load task from one to eight execution ticks. It
+records the first miss at tick 12. The timeline shows releases, execution,
+preemptions, idle intervals, absolute deadlines, misses, and the emitted EDF
+selection reason.
+
+| Verified run | Trace records | Running task ticks | Idle ticks | Misses |
+| --- | ---: | ---: | ---: | ---: |
+| normal | 92 | 10 | 11 | 0 |
+| overload | 84 | 17 | 4 | 1 |
+
+These values come from one complete Renode run of each mode. Run `make demo`
+to regenerate them. See [Deadline Lab](docs/DEADLINE_LAB.md) for the workload,
+artifact contract, and measurement boundary.
 
 The canonical target is the STM32F401RE on a NUCLEO-F401RE board:
 
@@ -74,6 +102,8 @@ The canonical target is the STM32F401RE on a NUCLEO-F401RE board:
 - A strict bounded Python decoder producing canonical JSON and raw records,
   plus an application-specific semantic oracle for a finite real Cortex-M4
   workload whose repeated traces are identical.
+- A four-task Deadline Lab with normal and overload modes, exact trace checks,
+  run provenance, JSON summaries, and standalone HTML/SVG timelines.
 
 ## Build
 
@@ -95,6 +125,7 @@ make test-lifecycle
 make test-edf
 make test-allocator
 make test-trace
+make demo
 ```
 
 `make setup` downloads locked Arm, Renode, CPython, Python-wheel, and STM32
@@ -114,6 +145,8 @@ make firmware BOARD=nucleo_f401re APP=lifecycle
 make firmware BOARD=nucleo_f401re APP=edf
 make firmware BOARD=nucleo_f401re APP=allocator
 make firmware BOARD=nucleo_f401re APP=trace
+make firmware BOARD=nucleo_f401re APP=deadline_lab WORKLOAD_MODE=normal
+make firmware BOARD=nucleo_f401re APP=deadline_lab WORKLOAD_MODE=overload
 ```
 
 Unknown board/application names fail instead of silently changing the image.
@@ -152,6 +185,7 @@ make run-allocator
 RENODE_REPEAT=10 make test-allocator
 make run-trace
 RENODE_REPEAT=10 make test-trace
+make demo
 make clean
 make help
 ```
@@ -192,10 +226,11 @@ must not be reused. Fixed task stacks are deliberately not moved onto this heap
 in PR 5. Ownership metadata is defensive bookkeeping, not hardware memory
 protection or task isolation.
 
-Tracing is enabled only for `APP=trace`, preserving the earlier exact UART
-contracts. Its 8192-byte static ring reduces the remaining dynamic heap by the
-same amount. Producers perform bounded record writes under PRIMASK; terminal
-idle thread mode closes and drains the ring before polling UART. `uart.bin`
+Tracing is enabled for `APP=trace` and `APP=deadline_lab`. Earlier application
+UART contracts remain unchanged. The 8192-byte static ring reduces the
+remaining dynamic heap by the same amount. Producers perform bounded record
+writes under PRIMASK; terminal idle thread mode closes and drains the ring
+before polling UART. `uart.bin`
 preserves the wire, `trace.bin` contains concatenated 32-byte records, and
 `trace.json` is the canonical decode. The trace run/test commands require the
 exact 102-record task, selection, committed/coalesced preemption, switch,
@@ -203,7 +238,7 @@ deadline, memory, idle-resumption, slot-reuse, and terminal-idle contract;
 repeat equality is an additional check, not the only oracle. See
 [docs/TRACE_FORMAT.md](docs/TRACE_FORMAT.md).
 
-## Planned campaign
+## Implementation campaign
 
 The reviewed sequence is:
 
@@ -215,7 +250,8 @@ The reviewed sequence is:
    tested locally);
 5. allocator hardening (implemented and tested locally);
 6. bounded structured kernel tracing (implemented and tested locally); and
-7. the Deadline Lab workload and standalone scheduling timeline.
+7. Deadline Lab workload and standalone scheduling timeline (implemented and
+   tested locally).
 
 The complete gates, review requirements, and deferred scope are in
 [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md).

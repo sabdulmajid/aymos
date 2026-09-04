@@ -2,9 +2,10 @@
 
 This document explains the main modules of AymOS and how they work together. It supplements the information in the README.
 
-> **Status:** `APP=lifecycle`, `APP=edf`, `APP=allocator`, and `APP=trace` link
-> and test the kernel below. Portable allocator, scheduler, and trace cores are
-> also compiled unchanged into native ASan/UBSan tests.
+> **Status:** `APP=lifecycle`, `APP=edf`, `APP=allocator`, `APP=trace`, and
+> `APP=deadline_lab` link and test the kernel below. Portable allocator,
+> scheduler, and trace cores are also compiled unchanged into native
+> ASan/UBSan tests.
 
 ## Kernel
 
@@ -103,11 +104,19 @@ structured-trace tests. The
 obsolete `k_mem` implementation and its three manual allocator programs were
 retired in PR 5 so the repository does not present two allocator contracts.
 
+## Deadline Lab
+
+`APP=deadline_lab` runs sampler, controller, telemetry, and load tasks through
+the same Cortex-M4 kernel. Its normal build meets all eight job deadlines. Its
+overload build changes only the load demand and records the first miss at tick
+12. `make demo` validates both traces and creates standalone HTML timelines
+with run metadata. See [DEADLINE_LAB.md](DEADLINE_LAB.md).
+
 ## Next Steps
 
 For the verified workflow, use `make setup`, `make firmware`, `make test`,
 `make test-emulator`, `make test-lifecycle`, `make test-edf`,
-`make test-allocator`, and `make test-trace`, then read
+`make test-allocator`, `make test-trace`, and `make demo`, then read
 `docs/BUILDING.md`. `make run-lifecycle` and `make run-edf` print exact
 guest-generated streams; `make run-allocator` prints the allocation stress
 contract. `make run-trace` reports the decoded record count and retains raw

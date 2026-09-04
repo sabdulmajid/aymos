@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   firmware-and-renode:
-    name: F401RE boot, lifecycle, EDF, allocator, and trace
+    name: F401RE kernel and Deadline Lab
     runs-on: ubuntu-24.04
     timeout-minutes: 20
 
@@ -48,6 +48,9 @@ jobs:
       - name: Build, decode, and compare three structured ARM traces
         run: make test-trace
 
+      - name: Run the normal and overload Deadline Lab
+        run: make demo
+
       - name: Retain firmware and emulator diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -61,5 +64,7 @@ jobs:
             build/nucleo_f401re/edf/
             build/nucleo_f401re/allocator/
             build/nucleo_f401re/trace/
+            build/nucleo_f401re/deadline_lab/
             build/native/
             build/renode/
+            runs/

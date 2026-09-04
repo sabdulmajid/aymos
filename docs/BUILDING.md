@@ -131,6 +131,18 @@ match the first attempt exactly. Build artifacts are under
 `build/nucleo_f401re/trace/`; capture attempts are under `build/renode/run/` or
 `build/renode/test/`.
 
+The Deadline Lab builds separate normal and overload images and reports both
+runs:
+
+```sh
+make demo
+```
+
+The firmware paths are under
+`build/nucleo_f401re/deadline_lab/<mode>/`. The checked run artifacts are under
+`runs/<run-id>/<mode>/`. See [DEADLINE_LAB.md](DEADLINE_LAB.md) for the task
+configuration and artifact contract.
+
 The Makefile invokes the compiler by its absolute project-local path. Project
 code uses `-Wall -Wextra -Werror` plus additional diagnostics. Vendor code uses
 visible `-Wall -Wextra` warnings without converting upstream warnings into
