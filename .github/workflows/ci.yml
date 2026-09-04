@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   firmware-and-renode:
-    name: F401RE kernel and labs
+    name: F401RE kernel and workloads
     runs-on: ubuntu-24.04
     timeout-minutes: 20
 
@@ -51,10 +51,10 @@ jobs:
       - name: Build, decode, and check one structured ARM trace
         run: make test-trace
 
-      - name: Run the normal and overload Deadline Lab
+      - name: Run the normal and overload scheduling workloads
         run: make demo
 
-      - name: Run both Signal Lab images and create the report
+      - name: Run both DSP images and create the report
         run: make demo-dsp
 
       - name: Retain firmware and emulator diagnostics

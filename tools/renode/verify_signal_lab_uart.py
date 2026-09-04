@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate one complete AymOS Signal Lab UART stream."""
+"""Validate one complete AymOS DSP workload UART stream."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ def main(argv: list[str]) -> int:
     implementation = os.environ.get("AYMOS_SIGNAL_IMPL", "")
     if implementation not in ("scalar", "m4"):
         print(
-            f"signal-lab-uart: invalid AYMOS_SIGNAL_IMPL: {implementation!r}",
+            f"dsp-uart: invalid AYMOS_SIGNAL_IMPL: {implementation!r}",
             file=sys.stderr,
         )
         return 2
@@ -38,10 +38,10 @@ def main(argv: list[str]) -> int:
             encoding="utf-8",
         )
     except (OSError, SignalLabError) as error:
-        print(f"signal-lab-uart: {error}", file=sys.stderr)
+        print(f"dsp-uart: {error}", file=sys.stderr)
         return 1
     print(
-        f"AYMOS SIGNAL LAB PASS IMPL={implementation} "
+        f"AYMOS DSP PASS IMPL={implementation} "
         f"RECORDS={decoded['record_count']} OUTPUT_CRC=0x{result['output_crc32']:08X}"
     )
     return 0

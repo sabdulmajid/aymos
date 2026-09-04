@@ -1,9 +1,9 @@
-# Cortex-M4 performance lab
+# Fixed-point DSP workload
 
-The performance lab uses one Q15 finite impulse response (FIR) filter. The
+This workload uses one Q15 finite impulse response (FIR) filter. The
 implementation does not allocate memory. Native tests prove that the scalar
-and portable paired functions produce the same integer results. Signal Lab
-runs the scalar and M4 functions in separate NUCLEO-F401RE firmware images.
+and portable paired functions produce the same integer results. The complete
+test runs the scalar and M4 functions in separate NUCLEO-F401RE images.
 
 ## Run the checks
 
@@ -37,12 +37,12 @@ VFP instructions and a `memcpy` reference in either checked function.
 This is static instruction evidence. It is not a hardware timing measurement.
 It does not prove execution time, interrupt latency, or a real-time limit.
 
-## Run Signal Lab
+## Run the scheduled workload
 
 Run both firmware configurations once:
 
 ```sh
-make test-signal-lab
+make test-dsp
 ```
 
 The command builds one scalar image and one M4 image. Each image uses the same
@@ -94,11 +94,11 @@ host stop.
 Build or run one configuration when you need a shorter iteration:
 
 ```sh
-make signal-lab SIGNAL_IMPL=scalar
-make run-signal-lab SIGNAL_IMPL=m4
+make dsp SIGNAL_IMPL=scalar
+make run-dsp SIGNAL_IMPL=m4
 ```
 
-The complete comparison gate is `make test-signal-lab`.
+The complete comparison gate is `make test-dsp`.
 
 ## Create the comparison report
 
@@ -127,17 +127,16 @@ runs/<UTC-id>-<commit>-signal/
   metadata.json
   workload.json
   summary.json
-  comparison.html
-  comparison.svg
-  scalar/
-  m4/
+comparison.html
+scalar/
+m4/
 ```
 
-Each implementation directory contains the exact 14-file Signal Lab evidence
+Each implementation directory contains the exact 14-file DSP evidence
 set. The top metadata hashes each copied and generated report artifact except
 itself and the control marker. A marked stage becomes visible through one
-same-file-system rename. The tool keeps eight complete marked Signal Lab
-reports. It does not remove Deadline Lab runs, active stages, or unmarked
+same-file-system rename. The tool keeps eight complete marked DSP reports. It
+does not remove scheduling demonstration runs, active stages, or unmarked
 paths.
 
 The report path supports Linux. It anchors evidence and report directories with
@@ -191,7 +190,7 @@ is not evidence of Cortex-M4 execution.
 
 ## Current limits
 
-Signal Lab changes no kernel policy and no trace schema. It uses deterministic
+The DSP workload changes no kernel policy and no trace schema. It uses deterministic
 work and checks functional results. The execution trace proves that the M4 DSP
 instructions ran in the board-targeted image. It does not prove hardware
 timing, interrupt latency, worst-case execution time, or a speedup.

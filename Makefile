@@ -325,12 +325,14 @@ LDFLAGS := \
 	-Wl,-Map,$(MAP) \
 	-Wl,--cref
 
-.PHONY: firmware lifecycle edf allocator trace deadline-lab signal-lab demo demo-dsp report-dsp setup validate test test-native \
+.PHONY: firmware lifecycle edf allocator trace workload deadline-lab dsp \
+	signal-lab quickstart demo demo-dsp report-dsp setup validate test test-native \
 	test-native-scheduler test-native-allocator test-native-trace test-native-dsp \
 	check-dsp-codegen check-dsp-codegen-internal run run-lifecycle run-edf \
 	run-allocator run-trace test-emulator test-emulator-offline test-lifecycle test-edf \
-	test-allocator test-trace test-signal-lab test-host-trace test-host-deadline-lab \
-	test-host-signal-lab test-host-performance-report run-signal-lab \
+	test-allocator test-trace test-dsp test-signal-lab test-host-trace \
+	test-host-scheduling test-host-deadline-lab test-host-dsp \
+	test-host-signal-lab test-host-performance-report run-dsp run-signal-lab \
 	decode-trace \
 	check-renode-platform clean clean-build clean-emulator flash disassembly \
 	help check-setup FORCE
@@ -346,7 +348,7 @@ check-setup:
 check-renode-platform:
 	@./tools/renode/check_platform.sh
 
-test: test-native test-host-trace test-host-deadline-lab test-host-signal-lab \
+test: test-native test-host-trace test-host-scheduling test-host-dsp \
 	test-host-performance-report check-setup \
 	check-renode-platform
 	@env -u PYTHONHOME -u PYTHONPATH \
@@ -359,15 +361,19 @@ test-host-trace: check-setup
 		$(PYTHON) -m unittest tests.host.test_trace_decoder \
 			tests.host.test_trace_workload -v
 
-test-host-deadline-lab: check-setup
+test-host-scheduling: check-setup
 	@env -u PYTHONHOME -u PYTHONPATH \
 		PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 \
 		$(PYTHON) -m unittest tests.host.test_deadline_lab -v
 
-test-host-signal-lab: check-setup
+test-host-deadline-lab: test-host-scheduling
+
+test-host-dsp: check-setup
 	@env -u PYTHONHOME -u PYTHONPATH \
 		PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 \
 		$(PYTHON) -m unittest tests.host.test_signal_lab -v
+
+test-host-signal-lab: test-host-dsp
 
 test-host-performance-report: check-setup
 	@env -u PYTHONHOME -u PYTHONPATH \
@@ -633,20 +639,26 @@ run-allocator:
 run-trace:
 	@$(MAKE) --no-print-directory APP=trace run
 
-signal-lab:
+dsp:
 	@$(MAKE) --no-print-directory APP=signal_lab \
 		SIGNAL_IMPL="$(SIGNAL_IMPL)" firmware
 
-run-signal-lab:
+signal-lab: dsp
+
+run-dsp:
 	@$(MAKE) --no-print-directory APP=signal_lab \
 		SIGNAL_IMPL="$(SIGNAL_IMPL)" run
 
-test-signal-lab: check-renode-platform
+run-signal-lab: run-dsp
+
+test-dsp: check-renode-platform
 	@$(MAKE) --no-print-directory APP=signal_lab SIGNAL_IMPL=scalar firmware
 	@$(MAKE) --no-print-directory APP=signal_lab SIGNAL_IMPL=m4 firmware
 	@env -u PYTHONHOME -u PYTHONPATH \
 		PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 \
 		$(PYTHON) -m tools.aymos_lab.signal_lab test
+
+test-signal-lab: test-dsp
 
 report-dsp: check-setup
 	@env -u PYTHONHOME -u PYTHONPATH \
@@ -654,12 +666,18 @@ report-dsp: check-setup
 		$(PYTHON) -m tools.aymos_lab.performance_report
 
 demo-dsp: check-renode-platform
-	@$(MAKE) --no-print-directory test-signal-lab
+	@$(MAKE) --no-print-directory test-dsp
 	@$(MAKE) --no-print-directory report-dsp
 
-deadline-lab:
+workload:
 	@$(MAKE) --no-print-directory APP=deadline_lab \
 		WORKLOAD_MODE="$(WORKLOAD_MODE)" firmware
+
+deadline-lab: workload
+
+quickstart:
+	@$(MAKE) --no-print-directory setup
+	@$(MAKE) --no-print-directory demo
 
 demo:
 	@$(MAKE) --no-print-directory APP=deadline_lab \
@@ -790,8 +808,8 @@ disassembly: $(ELF)
 	@printf '%s\n' "$(BUILD_DIR)/$(PROJECT).lst"
 
 flash: $(BIN)
-	@printf 'Physical NUCLEO-F401RE flashing is not validated in this environment.\n' >&2
-	@printf 'Install and explicitly invoke an ST-LINK tool on: %s\n' "$(BIN)" >&2
+	@printf 'AymOS created the NUCLEO-F401RE binary: %s\n' "$(BIN)" >&2
+	@printf 'Configure an ST-LINK tool and use it to program this file.\n' >&2
 	@exit 2
 
 clean-build:
@@ -804,6 +822,7 @@ clean: clean-build clean-emulator
 
 help:
 	@printf '%s\n' \
+		'make quickstart   Install tools and create the scheduling report' \
 		'make setup        Install and verify pinned project-local dependencies' \
 		'make firmware     Build and validate the F401RE boot firmware (default)' \
 		'make test         Run native and host parser/platform tests' \
@@ -815,26 +834,26 @@ help:
 		'make run-edf      Build/run the deterministic two-task EDF scenario' \
 		'make run-allocator  Build/run repeated task-owned allocation scenario' \
 		'make run-trace    Build/run and decode the structured trace scenario' \
-		'make signal-lab SIGNAL_IMPL=scalar|m4  Build one Signal Lab image' \
-		'make run-signal-lab SIGNAL_IMPL=scalar|m4  Run one Signal Lab image' \
-		'make test-signal-lab  Run and compare both Signal Lab images once' \
-		'make demo-dsp     Run both Signal Lab images and create one report' \
-		'make report-dsp   Create a report from existing Signal Lab evidence' \
-		'make deadline-lab WORKLOAD_MODE=normal|overload  Build one lab mode' \
-		'make demo         Run both Deadline Lab modes and create HTML reports' \
+		'make dsp SIGNAL_IMPL=scalar|m4  Build one DSP workload image' \
+		'make run-dsp SIGNAL_IMPL=scalar|m4  Run one DSP workload image' \
+		'make test-dsp     Run and compare both DSP images once' \
+		'make demo-dsp     Run both DSP images and create one report' \
+		'make report-dsp   Create a report from existing DSP evidence' \
+		'make workload WORKLOAD_MODE=normal|overload  Build one workload mode' \
+		'make demo         Run both scheduling modes and create HTML reports' \
 		'make test-emulator Run the bounded Renode/Robot UART boot test' \
 		'make test-emulator-offline  Repeat the test in a network namespace' \
 		'make test-lifecycle  Assert the ARM lifecycle scenario in Renode' \
 		'make test-edf     Assert the exact ARM EDF sequence in Renode' \
 		'make test-allocator Assert allocator/task-slot reuse in Renode' \
 		'make test-trace   Assert one exact ARM trace workload' \
-		'make test-host-deadline-lab  Test the timeline and workload model' \
+		'make test-host-scheduling  Test the timeline and workload model' \
 		'make decode-trace TRACE_INPUT=uart.bin  Strictly decode a saved trace' \
 		'make validate     Re-run ELF, map, ABI, and memory validation' \
 		'make disassembly  Generate an annotated disassembly' \
 		'make clean        Remove firmware and emulator build artifacts' \
-		'make flash        Build, then stop with the unvalidated hardware notice' \
+		'make flash        Build the binary and print ST-LINK guidance' \
 		'' \
-		'Selection: BOARD=nucleo_f401re APP=boot|lifecycle|edf|allocator|trace|deadline_lab|signal_lab'
+		'See docs/BUILDING.md for low-level build selectors.'
 
 -include $(DEPENDENCY_FILES)

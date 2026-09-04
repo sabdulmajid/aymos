@@ -1,4 +1,4 @@
-"""Run and report the deterministic Cortex-M4 AymOS Deadline Lab."""
+"""Run and report the deterministic Cortex-M4 scheduling workload."""
 
 from __future__ import annotations
 
@@ -164,13 +164,13 @@ EXPECTED_SELECTIONS = {
 
 
 class DeadlineLabError(TraceError):
-    """The trace does not satisfy the Deadline Lab workload contract."""
+    """The trace does not satisfy the scheduling workload contract."""
 
 
 def workload(mode: str) -> dict[str, dict[str, int | str]]:
     """Return a detached workload definition for one supported mode."""
     if mode not in ("normal", "overload"):
-        raise DeadlineLabError(f"unknown Deadline Lab mode: {mode}")
+        raise DeadlineLabError(f"unknown scheduling mode: {mode}")
     result = {name: dict(values) for name, values in BASE_WORKLOAD.items()}
     result["load"]["execution_ticks"] = 8 if mode == "overload" else 1
     return result
@@ -186,7 +186,7 @@ def _records(decoded: dict[str, Any], event: str) -> list[dict[str, Any]]:
 def _expect(actual: Any, expected: Any, label: str) -> None:
     if actual != expected:
         raise DeadlineLabError(
-            f"Deadline Lab {label} mismatch: got {actual!r}, "
+            f"Scheduling workload {label} mismatch: got {actual!r}, "
             f"expected {expected!r}")
 
 
@@ -310,7 +310,7 @@ def validate_schedule_projection(decoded: dict[str, Any], mode: str) -> None:
                 "dispatch/switch correlation")
         if dispatch["sequence"] >= switch["sequence"]:
             raise DeadlineLabError(
-                "Deadline Lab dispatch does not precede its committed switch")
+                "Scheduler dispatch does not precede its committed switch")
 
 
 def validate_workload(decoded: dict[str, Any], mode: str) -> None:
@@ -546,7 +546,7 @@ def render_timeline(decoded: dict[str, Any], summary: dict[str, Any]) -> str:
     return f'''<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AymOS Deadline Lab — {title_mode}</title>
+<title>AymOS scheduling report — {title_mode}</title>
 <style>
 :root{{--ink:#e5eef7;--muted:#94a3b8;--panel:#111827;--line:#263244;--accent:#38bdf8}}
 *{{box-sizing:border-box}}body{{margin:0;background:#08111f;color:var(--ink);font:15px/1.5 ui-sans-serif,system-ui,sans-serif}}
@@ -558,7 +558,7 @@ main{{max-width:1240px;margin:auto;padding:40px 24px 72px}}h1{{font-size:34px;ma
 .run{{rx:5;opacity:.92}}.release{{fill:#f8fafc;stroke:#08111f;stroke-width:2}}.deadline{{stroke:#f8fafc;stroke-width:1.5;stroke-dasharray:4 4}}.preempt{{fill:#f472b6}}.miss{{stroke:#fb7185;stroke-width:4;stroke-linecap:round}}
 table{{width:100%;border-collapse:collapse;background:var(--panel);border-radius:12px;overflow:hidden}}th,td{{padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}}th{{color:#93c5fd}}code{{color:#bae6fd}}
 </style></head><body><main>
-<h1>AymOS Deadline Lab</h1><p>{title_mode} mode. This report uses the structured events emitted by the Cortex-M4 firmware.</p>
+<h1>AymOS scheduling report</h1><p>{title_mode} mode. This report uses the structured events emitted by the Cortex-M4 firmware.</p>
 <div class="cards"><div class="card"><div>Result</div><div class="value {'ok' if summary['deadline_misses'] == 0 else 'bad'}">{html.escape(summary['result'])}</div></div>
 <div class="card"><div>Guest ticks</div><div class="value">{summary['final_tick']}</div></div>
 <div class="card"><div>Context switches</div><div class="value">{summary['context_switches']}</div></div>
@@ -766,7 +766,7 @@ def run_demo() -> Path:
             for mode in ("normal", "overload")
         }
         index = '''<!doctype html><html lang="en"><head><meta charset="utf-8">
-<title>AymOS Deadline Lab</title><style>body{font:18px system-ui;background:#08111f;color:#e5eef7;max-width:760px;margin:60px auto;padding:20px}a{display:block;color:#38bdf8;background:#111827;border:1px solid #263244;border-radius:12px;padding:20px;margin:14px 0;text-decoration:none}</style></head><body><h1>AymOS Deadline Lab</h1><a href="normal/timeline.html">Normal mode — all deadlines met</a><a href="overload/timeline.html">Overload mode — first deadline miss</a></body></html>'''
+<title>AymOS scheduling report</title><style>body{font:18px system-ui;background:#08111f;color:#e5eef7;max-width:760px;margin:60px auto;padding:20px}a{display:block;color:#38bdf8;background:#111827;border:1px solid #263244;border-radius:12px;padding:20px;margin:14px 0;text-decoration:none}</style></head><body><h1>AymOS scheduling report</h1><a href="normal/timeline.html">Normal mode — all deadlines met</a><a href="overload/timeline.html">Overload mode — first deadline miss</a></body></html>'''
         (run_root / "index.html").write_text(index, encoding="utf-8")
         _write_json(run_root / "summary.json", {
             "schema_version": 1, "run_id": run_id,
@@ -798,10 +798,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if arguments.command == "demo":
             output = run_demo()
-            print(f"Deadline Lab reports: {output}")
+            print(f"AymOS scheduling reports: {output}")
             return 0
     except (DeadlineLabError, OSError, subprocess.SubprocessError) as error:
-        print(f"deadline-lab: {error}", file=sys.stderr)
+        print(f"scheduling: {error}", file=sys.stderr)
         return 1
     return 2
 

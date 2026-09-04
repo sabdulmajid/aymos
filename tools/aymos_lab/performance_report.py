@@ -1,4 +1,4 @@
-"""Validate Signal Lab evidence and publish a standalone comparison report."""
+"""Validate DSP evidence and publish a standalone comparison report."""
 
 from __future__ import annotations
 
@@ -97,7 +97,7 @@ TASKS = {
 
 
 class PerformanceReportError(ValueError):
-    """Signal Lab evidence cannot produce a trusted report."""
+    """DSP evidence cannot produce a trusted report."""
 
 
 def _strict_equal(actual: Any, expected: Any, label: str) -> None:
@@ -503,7 +503,7 @@ def _validate_uart_evidence(
             f"{implementation} raw UART records")
     _expect(result, expected_result, f"{implementation} UART result")
     expected_status = (
-        f"AYMOS SIGNAL LAB PASS IMPL={implementation} "
+        f"AYMOS DSP PASS IMPL={implementation} "
         f"RECORDS={signal_lab.EXPECTED_RECORD_COUNT} "
         f"OUTPUT_CRC=0x{signal_lab.OUTPUT_CRC:08X}\n"
     ).encode("ascii")
@@ -515,8 +515,8 @@ def _validate_uart_evidence(
 
 def _parse_summary(data: bytes) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
     summary_data = data
-    summary = _exact_keys(_json_bytes(summary_data, "Signal Lab summary"),
-                          TOP_KEYS, "Signal Lab summary")
+    summary = _exact_keys(_json_bytes(summary_data, "DSP summary"),
+                          TOP_KEYS, "DSP summary")
     _expect(summary["schema_version"], SUMMARY_SCHEMA_VERSION, "summary schema")
     _expect(summary["board"], "nucleo_f401re", "summary board")
     _expect(summary["random_seed"], "0x1A2B3C4D", "summary seed")
@@ -543,7 +543,7 @@ def _load_evidence_descriptor(root_descriptor: int) -> dict[str, Any]:
     _validate_evidence_root(root_descriptor)
     summary_data = _read_regular_at(
         root_descriptor, "summary.json", SUMMARY_LIMIT,
-        "Signal Lab summary",
+        "DSP summary",
     )
     summary, by_impl = _parse_summary(summary_data)
     artifacts = {
@@ -631,8 +631,8 @@ def _load_evidence_descriptor(root_descriptor: int) -> dict[str, Any]:
 
 
 def load_evidence(root: Path = DEFAULT_EVIDENCE_ROOT) -> dict[str, Any]:
-    """Read and fully validate one completed two-image Signal Lab gate."""
-    root_descriptor = _open_directory(root, "Signal Lab evidence root")
+    """Read and fully validate one completed two-image DSP gate."""
+    root_descriptor = _open_directory(root, "DSP evidence root")
     try:
         return _load_evidence_descriptor(root_descriptor)
     finally:
@@ -678,7 +678,7 @@ def build_report_model(evidence: dict[str, Any]) -> dict[str, Any]:
     result.pop("implementation")
     return {
         "schema_version": REPORT_SCHEMA_VERSION,
-        "title": "AymOS Signal Lab",
+        "title": "AymOS DSP workload",
         "board": "nucleo_f401re",
         "source_commit": evidence["git_commit"],
         "trace_schema_version": 1,
@@ -735,7 +735,7 @@ def _svg_timeline(model: dict[str, Any]) -> str:
 
     values = [
         f'<svg viewBox="0 0 1060 {height}" role="img" '
-        'aria-label="Common Signal Lab scheduled task-state timeline">',
+        'aria-label="Common DSP workload task-state timeline">',
         f'<rect width="1060" height="{height}" rx="12" fill="#0b1323"/>',
     ]
     ticks = list(range(0, domain + 1, 3))
@@ -782,44 +782,6 @@ def _svg_timeline(model: dict[str, Any]) -> str:
     return "".join(values)
 
 
-def render_svg(model: dict[str, Any]) -> str:
-    result = model["result"]
-    scalar = model["instruction_evidence"]["scalar"]
-    m4 = model["instruction_evidence"]["m4"]
-    timeline = _svg_timeline(model)
-    commit = html.escape(model["source_commit"])
-    return f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 760" role="img" aria-labelledby="title desc">
-<title id="title">AymOS Signal Lab comparison</title>
-<desc id="desc">Scalar and packed Cortex-M4 FIR instruction evidence with the common scheduled task-state timeline.</desc>
-<style>
-.bg{{fill:#070d18}}.panel{{fill:#101827;stroke:#26344c}}.muted{{fill:#93a4bb}}.ink{{fill:#edf5ff}}
-.accent{{fill:#67e8f9}}.violet{{fill:#c4b5fd}}.green{{fill:#6ee7b7}}text{{font-family:ui-sans-serif,system-ui,sans-serif}}
-</style><rect class="bg" width="1200" height="760" rx="22"/>
-<text class="ink" x="50" y="68" font-size="34" font-weight="700">AymOS Signal Lab</text>
-<text class="muted" x="50" y="97" font-size="15">Exact Cortex-M4 firmware result and executed-instruction evidence</text>
-<rect class="panel" x="50" y="130" width="340" height="154" rx="16"/>
-<text class="accent" x="74" y="164" font-size="16" font-weight="700">FIXED RESULT</text>
-<text class="ink" x="74" y="204" font-size="28" font-weight="700">{result['total_outputs']} outputs</text>
-<text class="muted" x="74" y="235" font-size="15">Output CRC-32  0x{result['output_crc32']:08X}</text>
-<text class="muted" x="74" y="260" font-size="15">Both fixed result contracts pass</text>
-<rect class="panel" x="410" y="130" width="340" height="154" rx="16"/>
-<text class="accent" x="434" y="164" font-size="16" font-weight="700">SCALAR C</text>
-<text class="ink" x="434" y="204" font-size="28" font-weight="700">{scalar['single_lane_smlalbb']:,} SMLALBB</text>
-<text class="muted" x="434" y="235" font-size="15">one executed single-lane MAC per product</text>
-<text class="muted" x="434" y="260" font-size="15">{scalar['function_instruction_hits']:,} total FIR-body records</text>
-<rect class="panel" x="770" y="130" width="380" height="154" rx="16"/>
-<text class="violet" x="794" y="164" font-size="16" font-weight="700">PACKED M4</text>
-<text class="ink" x="794" y="204" font-size="28" font-weight="700">{m4['packed_smlald']:,} SMLALD</text>
-<text class="muted" x="794" y="235" font-size="15">{m4['products_covered']:,} products + {m4['ssat']:,} SSAT</text>
-<text class="muted" x="794" y="260" font-size="15">{m4['function_instruction_hits']:,} total FIR-body records</text>
-<text class="ink" x="50" y="329" font-size="20" font-weight="700">Common scheduled task-state timeline</text>
-<text class="muted" x="50" y="353" font-size="13">Bars show scheduled RUNNING state. They do not show CPU-active time.</text>
-<g transform="translate(50 370) scale(1.038)">{timeline}</g>
-<text class="muted" x="50" y="712" font-size="12">Source {commit[:12]} · schema-1 trace · Renode {html.escape(model['renode_version'])} · soft-float · DSP units at -O2</text>
-<text class="muted" x="50" y="737" font-size="12">The packed MAC count is lower. This report makes no speed, cycle, latency, WCET, or physical performance claim.</text>
-</svg>\n'''
-
-
 def render_html(model: dict[str, Any]) -> str:
     result = model["result"]
     scalar = model["instruction_evidence"]["scalar"]
@@ -827,14 +789,14 @@ def render_html(model: dict[str, Any]) -> str:
     timeline = _svg_timeline(model)
     return f'''<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AymOS Signal Lab</title><style>
+<title>AymOS DSP workload</title><style>
 :root{{--bg:#070d18;--panel:#101827;--line:#26344c;--ink:#edf5ff;--muted:#9aabc1;--cyan:#67e8f9;--violet:#c4b5fd}}
 *{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 ui-sans-serif,system-ui,sans-serif}}
 main{{max-width:1180px;margin:auto;padding:44px 24px 72px}}h1{{font-size:38px;margin:0}}h2{{margin-top:34px}}p{{color:var(--muted)}}
 .cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin:28px 0}}.card,.panel{{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px}}
 .label{{color:var(--cyan);font-weight:700;letter-spacing:.04em}}.value{{font-size:28px;font-weight:750;margin:8px 0}}.sub{{color:var(--muted)}}
 .plot{{overflow:auto}}.plot svg{{min-width:900px;width:100%}}table{{width:100%;border-collapse:collapse}}th,td{{text-align:left;padding:11px;border-bottom:1px solid var(--line)}}th{{color:var(--cyan)}}code{{color:#bae6fd}}
-</style></head><body><main><h1>AymOS Signal Lab</h1>
+</style></head><body><main><h1>AymOS DSP workload</h1>
 <p>Two exact NUCLEO-F401RE firmware images run the same deterministic workload through the AymOS kernel.</p>
 <div class="cards"><div class="card"><div class="label">FIXED RESULT</div><div class="value">{result['total_outputs']} outputs</div><div class="sub">Output CRC-32 <code>0x{result['output_crc32']:08X}</code><br>Both fixed result contracts pass. The structured traces are byte-identical.</div></div>
 <div class="card"><div class="label">SCALAR C</div><div class="value">{scalar['single_lane_smlalbb']:,} SMLALBB</div><div class="sub">One executed single-lane MAC per product.<br>{scalar['function_instruction_hits']:,} total FIR-body instruction records.</div></div>
@@ -866,19 +828,6 @@ def workload_document(model: dict[str, Any]) -> dict[str, Any]:
 
 def _json_text(value: Any) -> str:
     return json.dumps(value, indent=2, sort_keys=True) + "\n"
-
-
-def representative_document(model: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "schema_version": REPORT_SCHEMA_VERSION,
-        "source_commit": model["source_commit"],
-        "board": model["board"],
-        "trace_schema_version": model["trace_schema_version"],
-        "result": model["result"],
-        "instruction_evidence": model["instruction_evidence"],
-        "schedule": model["schedule"],
-        "evidence_boundary": model["measurement_boundary"],
-    }
 
 
 def _open_runs_root(root: Path) -> tuple[Path, int]:
@@ -1257,11 +1206,9 @@ def publish_report(
                         workload_document(model)).encode("utf-8"),
                     "summary.json": _json_text(model).encode("utf-8"),
                     "comparison.html": render_html(model).encode("utf-8"),
-                    "comparison.svg": render_svg(model).encode("utf-8"),
                 })
                 for name in (
                     "workload.json", "summary.json", "comparison.html",
-                    "comparison.svg",
                 ):
                     _write_bytes_at(stage_descriptor, name, output_files[name])
                 metadata = {
@@ -1335,28 +1282,13 @@ def publish_report(
     return root / run_id
 
 
-def write_assets(evidence_root: Path, output_root: Path) -> None:
-    evidence = load_evidence(evidence_root)
-    model = build_report_model(evidence)
-    output_root.mkdir(parents=True, exist_ok=True)
-    (output_root / "signal-lab.svg").write_text(render_svg(model), encoding="utf-8")
-    (output_root / "signal-lab.json").write_text(
-        _json_text(representative_document(model)), encoding="utf-8"
-    )
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evidence", type=Path, default=DEFAULT_EVIDENCE_ROOT)
     parser.add_argument("--runs", type=Path, default=DEFAULT_RUNS_ROOT)
-    parser.add_argument("--assets", type=Path)
     arguments = parser.parse_args(argv)
     try:
-        if arguments.assets is not None:
-            write_assets(arguments.evidence, arguments.assets)
-            print(arguments.assets)
-        else:
-            print(publish_report(arguments.evidence, arguments.runs))
+        print(publish_report(arguments.evidence, arguments.runs))
     except PerformanceReportError as error:
         print(f"performance report failed: {error}", file=sys.stderr)
         return 2
