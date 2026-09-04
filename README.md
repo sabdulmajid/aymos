@@ -168,19 +168,19 @@ MSP, exception return, and the EDF scheduler in the board-targeted firmware.
 The repository contains several focused systems-engineering examples:
 
 - [Cortex-M4 context switching](arch/arm_cm4/context_switch.S) preserves the
-  task context through SVC and PendSV with separate MSP and PSP stacks.
-- [EDF scheduling](kernel/src/scheduler.c) uses explicit timing fields, a
+  task context through SVC & PendSV with separate MSP & PSP stacks.
+- [EDF scheduling](kernel/src/scheduler.c) uses timing fields, a
   64-bit order across 32-bit tick wrap, deterministic ties, and an idle
   fallback.
-- [Task lifecycle management](kernel/src/kernel.c) handles initial exception
-  frames, task arguments, returned task functions, and deferred stack reclaim.
+- [Task lifecycle management](kernel/src/kernel.c) handles exception
+  frames, task arguments, returned task functions, and stack reclaim.
 - [Structured tracing](kernel/src/trace.c) writes fixed-size events to a
-  bounded ring without formatted output in interrupt-sensitive paths.
+  bounded ring without output in interrupt-sensitive paths.
 - [Allocator hardening](kernel/src/allocator.c) provides eight-byte alignment,
-  ownership checks, coalescing, boundary validation, and fragmentation data.
+  ownership checks, boundary validation, and fragmentation data.
 - [Cortex-M4 DSP](dsp/src/fir_q15_m4.c) uses packed integer operations while a
-  scalar implementation supplies a clear correctness reference.
-- [Reproducible setup](tools/setup.sh) checks tool archives, executable hashes,
+  scalar implementation supplies a correctness reference.
+- [Reproducible setup](tools/setup.sh) checks tool archives, hashes,
   dependency revisions, and project-local Python packages.
 
 See [Engineering highlights](docs/ENGINEERING_HIGHLIGHTS.md) for the design
