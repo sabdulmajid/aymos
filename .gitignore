@@ -1,5 +1,5 @@
-/.deps/
-/.tools/
+/.deps
+/.tools
 /build/
 /runs/
 __pycache__/

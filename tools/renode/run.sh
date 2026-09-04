@@ -8,6 +8,7 @@ readonly repo_root="$(cd -- "${script_dir}/../.." && pwd)"
 readonly renode="${repo_root}/.tools/renode-1.16.1-dotnet-x86_64/renode"
 readonly python="${repo_root}/.tools/python-venv-renode-1.16.1/bin/python3"
 readonly app="${AYMOS_APP:-boot}"
+readonly workload_mode="${AYMOS_WORKLOAD_MODE:-normal}"
 case "${app}" in
     boot)
         uart_validator="${script_dir}/verify_uart.py"
@@ -29,13 +30,21 @@ case "${app}" in
         uart_validator="${script_dir}/verify_trace_uart.py"
         default_virtual_duration="0.5"
         ;;
+    deadline_lab)
+        uart_validator="${script_dir}/verify_deadline_lab_uart.py"
+        default_virtual_duration="0.5"
+        ;;
     *)
         printf 'renode-run: unsupported AYMOS_APP: %s\n' "${app}" >&2
         exit 2
         ;;
 esac
 readonly uart_validator default_virtual_duration
-readonly elf="${repo_root}/build/nucleo_f401re/${app}/aymos.elf"
+if [[ "${app}" == deadline_lab ]]; then
+    readonly elf="${repo_root}/build/nucleo_f401re/${app}/${workload_mode}/aymos.elf"
+else
+    readonly elf="${repo_root}/build/nucleo_f401re/${app}/aymos.elf"
+fi
 readonly boot_script="${repo_root}/platform/renode/boot.resc"
 readonly platform="${repo_root}/platform/renode/nucleo_f401re.repl"
 readonly host_timeout="${AYMOS_RENODE_HOST_TIMEOUT:-30}"
@@ -47,6 +56,12 @@ readonly emulator_log="${output_dir}/emulator.log"
 readonly monitor_command="\$bin=@${elf}; \$platform=@${platform}; include @${boot_script}; sysbus.usart2 CreateFileBackend @${uart_capture}; emulation RunFor \"${virtual_duration}\"; quit"
 
 validate_inputs() {
+    if [[ "${app}" == deadline_lab && "${workload_mode}" != normal &&
+          "${workload_mode}" != overload ]]; then
+        printf 'renode-run: invalid AYMOS_WORKLOAD_MODE: %s\n' \
+            "${workload_mode}" >&2
+        exit 2
+    fi
     [[ "${host_timeout}" =~ ^[0-9]+$ ]] && ((host_timeout >= 5 && host_timeout <= 300)) || {
         printf 'renode-run: invalid AYMOS_RENODE_HOST_TIMEOUT: %s\n' \
             "${host_timeout}" >&2
@@ -114,6 +129,8 @@ renode_build="$(printf '%s' "${renode_build}" | tr '\n' ' ' | sed 's/[[:space:]]
     printf 'schema=1\n'
     printf 'board=nucleo_f401re\n'
     printf 'app=%s\n' "${app}"
+    printf 'workload_mode=%s\n' \
+        "$([[ "${app}" == deadline_lab ]] && printf '%s' "${workload_mode}" || printf none)"
     printf 'git_commit=%s\n' "$(git -C "${repo_root}" rev-parse HEAD)"
     printf 'repository_clean=%s\n' \
         "$(test -z "$(git -C "${repo_root}" status --porcelain)" && printf true || printf false)"
@@ -126,7 +143,7 @@ renode_build="$(printf '%s' "${renode_build}" | tr '\n' ' ' | sed 's/[[:space:]]
     printf 'python_version=3.12.13\n'
     printf 'uart_validator_sha256=%s\n' \
         "$(sha256sum "${uart_validator}" | awk '{print $1}')"
-    if [[ "${app}" == trace ]]; then
+    if [[ "${app}" == trace || "${app}" == deadline_lab ]]; then
         printf 'trace_schema_version=1\n'
         printf 'trace_framing_version=1\n'
         printf 'trace_record_size=32\n'

@@ -5,15 +5,22 @@ export LC_ALL := C
 PROJECT := aymos
 BOARD ?= nucleo_f401re
 APP ?= boot
+WORKLOAD_MODE ?= normal
 
 SUPPORTED_BOARDS := nucleo_f401re
-SUPPORTED_APPS := boot lifecycle edf allocator trace
+SUPPORTED_APPS := boot lifecycle edf allocator trace deadline_lab
+SUPPORTED_WORKLOAD_MODES := normal overload
 
 ifeq ($(filter $(BOARD),$(SUPPORTED_BOARDS)),)
 $(error Unsupported BOARD '$(BOARD)'; supported boards: $(SUPPORTED_BOARDS))
 endif
 ifeq ($(filter $(APP),$(SUPPORTED_APPS)),)
 $(error Unsupported APP '$(APP)'; supported applications: $(SUPPORTED_APPS))
+endif
+ifeq ($(APP),deadline_lab)
+ifeq ($(filter $(WORKLOAD_MODE),$(SUPPORTED_WORKLOAD_MODES)),)
+$(error Unsupported WORKLOAD_MODE '$(WORKLOAD_MODE)'; supported modes: $(SUPPORTED_WORKLOAD_MODES))
+endif
 endif
 
 # PR 1 supports only the locked project-local toolchain. Reject external tool
@@ -58,7 +65,11 @@ CMSIS_CORE_DIR := .deps/stm32cube_f4_core/Drivers/CMSIS/Core/Include
 CMSIS_DEVICE_DIR := .deps/cmsis_device_f4
 HAL_DIR := .deps/stm32f4xx_hal_driver
 
+ifeq ($(APP),deadline_lab)
+BUILD_DIR := build/$(BOARD)/$(APP)/$(WORKLOAD_MODE)
+else
 BUILD_DIR := build/$(BOARD)/$(APP)
+endif
 OBJ_DIR := $(BUILD_DIR)/obj
 ELF := $(BUILD_DIR)/$(PROJECT).elf
 BIN := $(BUILD_DIR)/$(PROJECT).bin
@@ -121,6 +132,21 @@ PROJECT_C_SOURCES := \
 PROJECT_ASM_SOURCES := \
 	arch/arm_cm4/context_switch.S
 PROJECT_CPPFLAGS := -DAYMOS_TRACE_ENABLED=1
+else ifeq ($(APP),deadline_lab)
+PROJECT_C_SOURCES := \
+	apps/deadline_lab/main.c \
+	bsp/nucleo_f401re/src/kernel_interrupts.c \
+	kernel/src/allocator.c \
+	kernel/src/kernel.c \
+	kernel/src/scheduler.c \
+	kernel/src/trace.c \
+	kernel/src/trace_runtime.c \
+	$(COMMON_PROJECT_C_SOURCES)
+PROJECT_ASM_SOURCES := \
+	arch/arm_cm4/context_switch.S
+PROJECT_CPPFLAGS := \
+	-DAYMOS_TRACE_ENABLED=1 \
+	-DAYMOS_DEADLINE_LAB_OVERLOAD=$(if $(filter overload,$(WORKLOAD_MODE)),1,0)
 endif
 
 VENDOR_C_SOURCES := \
@@ -220,10 +246,10 @@ LDFLAGS := \
 	-Wl,-Map,$(MAP) \
 	-Wl,--cref
 
-.PHONY: firmware lifecycle edf allocator trace setup validate test test-native \
+.PHONY: firmware lifecycle edf allocator trace deadline-lab demo setup validate test test-native \
 	test-native-scheduler test-native-allocator test-native-trace run run-lifecycle run-edf \
 	run-allocator run-trace test-emulator test-emulator-offline test-lifecycle test-edf \
-	test-allocator test-trace test-host-trace \
+	test-allocator test-trace test-host-trace test-host-deadline-lab \
 	decode-trace \
 	check-renode-platform clean clean-build clean-emulator flash disassembly \
 	help check-setup FORCE
@@ -239,7 +265,8 @@ check-setup:
 check-renode-platform:
 	@./tools/renode/check_platform.sh
 
-test: test-native test-host-trace check-setup check-renode-platform
+test: test-native test-host-trace test-host-deadline-lab check-setup \
+	check-renode-platform
 	@env -u PYTHONHOME -u PYTHONPATH \
 		PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 \
 		$(PYTHON) -m unittest discover -s tests/renode -p 'test_*.py' -v
@@ -249,6 +276,11 @@ test-host-trace: check-setup
 		PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 \
 		$(PYTHON) -m unittest tests.host.test_trace_decoder \
 			tests.host.test_trace_workload -v
+
+test-host-deadline-lab: check-setup
+	@env -u PYTHONHOME -u PYTHONPATH \
+		PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 \
+		$(PYTHON) -m unittest tests.host.test_deadline_lab -v
 
 decode-trace: check-setup
 	@env -u PYTHONHOME -u PYTHONPATH \
@@ -380,7 +412,8 @@ test-native-trace: $(NATIVE_TRACE_TEST_SOURCES) kernel/include/aymos_trace.h FOR
 		test "$${actual}" = "$${expected}"
 
 run: firmware check-renode-platform
-	@AYMOS_APP="$(APP)" ./tools/renode/run.sh
+	@AYMOS_APP="$(APP)" AYMOS_WORKLOAD_MODE="$(WORKLOAD_MODE)" \
+		./tools/renode/run.sh
 
 run-lifecycle:
 	@$(MAKE) --no-print-directory APP=lifecycle run
@@ -393,6 +426,19 @@ run-allocator:
 
 run-trace:
 	@$(MAKE) --no-print-directory APP=trace run
+
+deadline-lab:
+	@$(MAKE) --no-print-directory APP=deadline_lab \
+		WORKLOAD_MODE="$(WORKLOAD_MODE)" firmware
+
+demo:
+	@$(MAKE) --no-print-directory APP=deadline_lab \
+		WORKLOAD_MODE=normal firmware
+	@$(MAKE) --no-print-directory APP=deadline_lab \
+		WORKLOAD_MODE=overload firmware
+	@env -u PYTHONHOME -u PYTHONPATH \
+		PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 \
+		$(PYTHON) -m tools.aymos_lab.deadline_lab demo
 
 test-emulator: firmware check-renode-platform
 	@AYMOS_APP="$(APP)" ./tools/renode/test.sh
@@ -484,11 +530,12 @@ $(BUILD_METADATA): FORCE $(ELF) tools/setup/dependencies.lock | check-setup
 		printf 'architecture_flags=%s\n' '$(ARCH_FLAGS)'; \
 		printf 'renode=%s\n' '1.16.1'; \
 		printf 'python=%s\n' '3.12.13'; \
-		printf 'trace_schema_version=%s\n' '$(if $(filter trace,$(APP)),1,disabled)'; \
-		printf 'trace_framing_version=%s\n' '$(if $(filter trace,$(APP)),1,disabled)'; \
-		printf 'trace_record_size=%s\n' '$(if $(filter trace,$(APP)),32,0)'; \
-		printf 'trace_footer_size=%s\n' '$(if $(filter trace,$(APP)),28,0)'; \
-		printf 'trace_ring_records=%s\n' '$(if $(filter trace,$(APP)),256,0)'; \
+		printf 'workload_mode=%s\n' '$(if $(filter deadline_lab,$(APP)),$(WORKLOAD_MODE),none)'; \
+		printf 'trace_schema_version=%s\n' '$(if $(filter trace deadline_lab,$(APP)),1,disabled)'; \
+		printf 'trace_framing_version=%s\n' '$(if $(filter trace deadline_lab,$(APP)),1,disabled)'; \
+		printf 'trace_record_size=%s\n' '$(if $(filter trace deadline_lab,$(APP)),32,0)'; \
+		printf 'trace_footer_size=%s\n' '$(if $(filter trace deadline_lab,$(APP)),28,0)'; \
+		printf 'trace_ring_records=%s\n' '$(if $(filter trace deadline_lab,$(APP)),256,0)'; \
 		printf 'stm32cube_f4=%s\n' "$$(git -C .deps/stm32cube_f4_core rev-parse HEAD)"; \
 		printf 'cmsis_device_f4=%s\n' "$$(git -C $(CMSIS_DEVICE_DIR) rev-parse HEAD)"; \
 		printf 'stm32f4xx_hal=%s\n' "$$(git -C $(HAL_DIR) rev-parse HEAD)"; \
@@ -526,18 +573,21 @@ help:
 		'make run-edf      Build/run the deterministic two-task EDF scenario' \
 		'make run-allocator  Build/run repeated task-owned allocation scenario' \
 		'make run-trace    Build/run and decode the structured trace scenario' \
+		'make deadline-lab WORKLOAD_MODE=normal|overload  Build one lab mode' \
+		'make demo         Run both Deadline Lab modes and create HTML reports' \
 		'make test-emulator Run the bounded Renode/Robot UART boot test' \
 		'make test-emulator-offline  Repeat the test in a network namespace' \
 		'make test-lifecycle  Assert the ARM lifecycle scenario in Renode' \
 		'make test-edf     Assert the exact ARM EDF sequence in Renode' \
 		'make test-allocator Assert allocator/task-slot reuse in Renode' \
 		'make test-trace   Assert and compare three exact ARM trace workloads' \
+		'make test-host-deadline-lab  Test the timeline and workload model' \
 		'make decode-trace TRACE_INPUT=uart.bin  Strictly decode a saved trace' \
 		'make validate     Re-run ELF, map, ABI, and memory validation' \
 		'make disassembly  Generate an annotated disassembly' \
 		'make clean        Remove firmware and emulator build artifacts' \
 		'make flash        Build, then stop with the unvalidated hardware notice' \
 		'' \
-		'Selection: BOARD=nucleo_f401re APP=boot|lifecycle|edf|allocator|trace'
+		'Selection: BOARD=nucleo_f401re APP=boot|lifecycle|edf|allocator|trace|deadline_lab'
 
 -include $(DEPENDENCY_FILES)

@@ -1,8 +1,9 @@
 # AymOS Real-Time Systems Lab implementation plan
 
-Status: PRs 1 through 5 are merged. PR 6 is implemented on top of PR 5. Its
-formal adversarial findings are corrected, its final re-review is approved,
-and its focused, inherited, committed-state, and hosted regression gates pass.
+Status: PRs 1 through 6 are merged. PR 7 is implemented on top of PR 6. Its
+focused host checks and one real normal and overload run pass. Independent
+review is approved. Committed-state evidence passes. Hosted CI remains the
+publication gate.
 
 This document defines the first trustworthy vertical slice of AymOS. It is a
 campaign plan, not a claim that the described target behavior exists today.
@@ -906,6 +907,15 @@ Acceptance evidence:
 - Independent review checks trace-to-interval correctness, simultaneous event
   ordering, empty/corrupt input, escaping, artifact provenance, deterministic
   overload, timeout cleanup, and scope.
+
+Local PR 7 implementation evidence (2026-09-04): `make demo` built and
+validated separate soft-float F401RE normal and overload ELF files. It ran both
+through the existing pinned Renode harness and strict schema-1 decoder. Normal
+mode produced 92 of 256 possible records, 11 idle ticks, and no miss. Overload
+mode produced 84 records, four idle ticks, and its only miss for the load task
+at its absolute deadline on tick 12. Both runs closed without trace loss at
+tick 21. Fifteen focused host model/report tests pass. Independent review is
+complete and approved.
 
 ## Review and PR quality protocol
 
