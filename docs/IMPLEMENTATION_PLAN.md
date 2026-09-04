@@ -1,8 +1,8 @@
 # AymOS Real-Time Systems Lab implementation plan
 
-Status: PR 1 and PR 2 are unmerged drafts. Both passed independent review; PR 2
-also passed its hosted CI run. PR 3 is implemented and independently approved;
-publication remains conditional on its committed-state provenance run.
+Status: PR 1 and PR 2 are merged. PR 3 is implemented at its committed head
+and has passed its architecture review, committed-state provenance checks,
+and hosted CI.
 
 This document defines the first trustworthy vertical slice of AymOS. It is a
 campaign plan, not a claim that the described target behavior exists today.
