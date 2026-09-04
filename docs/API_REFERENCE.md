@@ -3,8 +3,8 @@
 This document describes the public functions provided by AymOS. Each section lists the function prototype, its parameters, the return value and any notes about its usage.
 
 > **Status:** The task APIs are linked and tested by `APP=lifecycle`, `APP=edf`,
-> and `APP=allocator`. The memory API is tested by the same ARM allocator app
-> and by the portable allocator's native ASan/UBSan suite.
+> `APP=allocator`, and `APP=trace`. The memory and trace cores also run under
+> native ASan/UBSan tests.
 
 ## Task Management
 
@@ -85,7 +85,7 @@ PSP; PendSV reclaims the stack slot while executing on MSP.
 `os_tick_count`, `os_monotonic_tick_count`, `os_last_reclaimed_task`,
 `os_reclaim_count`, and `os_thread_uses_psp` provide bounded diagnostic
 evidence. The first returns the low 32 bits; the second snapshots the full
-scheduling time. They are not the structured tracing API planned for PR 6.
+scheduling time. They supplement, but do not replace, the structured trace.
 
 ### Scheduling and time semantics
 
@@ -160,3 +160,29 @@ remain in the fixed aligned stack pool; they are not heap allocations. This
 ownership metadata is bookkeeping, not hardware memory protection or task
 isolation. Newlib dynamic allocation remains disabled because `_sbrk` always
 returns `ENOMEM` and its linker heap interval is empty.
+
+## Structured tracing
+
+Trace production is kernel-owned and compiled into `APP=trace`. Its public
+data contract is `os_trace_record_t`: a versioned, naturally aligned 32-byte
+value containing monotonic guest tick, attempted-event sequence, event/task
+IDs, and three event-specific words. Selection summary and candidate records
+form one atomic all-or-drop batch with full deadlines, priority, incumbent,
+exclusion, purpose, and comparator tie reason.
+
+`int os_trace_finish(void)` is deliberately narrow: it succeeds only from the
+terminal idle task in thread mode. Under one PRIMASK section it closes producer
+state and snapshots counters, sequence, and final tick. It then copies one
+committed record at a time under short critical sections and performs CRC
+framing and polling UART only after restoring PRIMASK. The direct footer is
+authoritative even after overflow; strict complete decoding rejects any loss.
+
+The portable `os_trace_ring_*` functions are kernel internals exposed in a
+header so the identical C core can be sanitizer-tested. Applications consume
+UART through `make decode-trace TRACE_INPUT=... TRACE_JSON=...`, not by writing
+the ring. Exact
+layouts, event payloads, overflow behavior, and framing are in
+[TRACE_FORMAT.md](TRACE_FORMAT.md). Trace collection perturbs execution and is
+functional ordering evidence, not hardware timing or hard-real-time proof. The
+generic decoder validates schema/transport correctness; the `APP=trace` Renode
+validator adds the workload-specific exact 102-record scheduling oracle.

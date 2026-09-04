@@ -6,7 +6,8 @@ exact ELF headlessly in pinned Renode, and runs a deterministic Cortex-M4 task
 lifecycle through SVC, PendSV, PSP, and SysTick. The same kernel now applies an
 explicit, wrap-safe EDF timing policy to a deterministic periodic workload.
 Task-owned dynamic memory now uses the same hardened educational allocator in
-native sanitizer tests and real Cortex-M4 firmware.
+native sanitizer tests and real Cortex-M4 firmware. A bounded structured trace
+explains the same guest kernel's decisions without UART in producer paths.
 
 The canonical target is the STM32F401RE on a NUCLEO-F401RE board:
 
@@ -68,6 +69,11 @@ The canonical target is the STM32F401RE on a NUCLEO-F401RE board:
 - Native allocator tests under ASan/UBSan plus an exact ARM workload that
   repeatedly reuses one task slot, exercises a 1024-byte allocation, checks
   payload canaries, and proves owner cleanup and interrupt-mask restoration.
+- A versioned 32-byte event schema, 256-record static drop-new ring, atomic EDF
+  selection snapshots, CRC-framed UART transport, and terminal loss footer.
+- A strict bounded Python decoder producing canonical JSON and raw records,
+  plus an application-specific semantic oracle for a finite real Cortex-M4
+  workload whose repeated traces are identical.
 
 ## Build
 
@@ -88,6 +94,7 @@ make test-emulator
 make test-lifecycle
 make test-edf
 make test-allocator
+make test-trace
 ```
 
 `make setup` downloads locked Arm, Renode, CPython, Python-wheel, and STM32
@@ -106,6 +113,7 @@ make firmware BOARD=nucleo_f401re APP=boot
 make firmware BOARD=nucleo_f401re APP=lifecycle
 make firmware BOARD=nucleo_f401re APP=edf
 make firmware BOARD=nucleo_f401re APP=allocator
+make firmware BOARD=nucleo_f401re APP=trace
 ```
 
 Unknown board/application names fail instead of silently changing the image.
@@ -142,6 +150,8 @@ make run-edf
 RENODE_REPEAT=10 make test-edf
 make run-allocator
 RENODE_REPEAT=10 make test-allocator
+make run-trace
+RENODE_REPEAT=10 make test-trace
 make clean
 make help
 ```
@@ -182,6 +192,17 @@ must not be reused. Fixed task stacks are deliberately not moved onto this heap
 in PR 5. Ownership metadata is defensive bookkeeping, not hardware memory
 protection or task isolation.
 
+Tracing is enabled only for `APP=trace`, preserving the earlier exact UART
+contracts. Its 8192-byte static ring reduces the remaining dynamic heap by the
+same amount. Producers perform bounded record writes under PRIMASK; terminal
+idle thread mode closes and drains the ring before polling UART. `uart.bin`
+preserves the wire, `trace.bin` contains concatenated 32-byte records, and
+`trace.json` is the canonical decode. The trace run/test commands require the
+exact 102-record task, selection, committed/coalesced preemption, switch,
+deadline, memory, idle-resumption, slot-reuse, and terminal-idle contract;
+repeat equality is an additional check, not the only oracle. See
+[docs/TRACE_FORMAT.md](docs/TRACE_FORMAT.md).
+
 ## Planned campaign
 
 The reviewed sequence is:
@@ -193,7 +214,7 @@ The reviewed sequence is:
 4. explicit timing semantics and deterministic EDF tests (implemented and
    tested locally);
 5. allocator hardening (implemented and tested locally);
-6. bounded structured kernel tracing; and
+6. bounded structured kernel tracing (implemented and tested locally); and
 7. the Deadline Lab workload and standalone scheduling timeline.
 
 The complete gates, review requirements, and deferred scope are in

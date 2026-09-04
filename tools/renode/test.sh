@@ -25,6 +25,10 @@ case "${app}" in
         robot_suite="tests/renode/allocator.robot"
         uart_validator="${script_dir}/verify_allocator_uart.py"
         ;;
+    trace)
+        robot_suite="tests/renode/trace.robot"
+        uart_validator="${script_dir}/verify_trace_uart.py"
+        ;;
     *)
         printf 'renode-test: unsupported AYMOS_APP: %s\n' "${app}" >&2
         exit 2
@@ -124,6 +128,18 @@ for ((attempt = 1; attempt <= repeat; attempt++)); do
         printf 'platform_sha256=%s\n' "$(sha256sum "${platform}" | awk '{print $1}')"
         printf 'renode_version=1.16.1\n'
         printf 'renode_build=%s\n' "${renode_build}"
+        printf 'python_version=3.12.13\n'
+        printf 'uart_validator_sha256=%s\n' \
+            "$(sha256sum "${uart_validator}" | awk '{print $1}')"
+        if [[ "${app}" == trace ]]; then
+            printf 'trace_schema_version=1\n'
+            printf 'trace_framing_version=1\n'
+            printf 'trace_record_size=32\n'
+            printf 'trace_footer_size=28\n'
+            printf 'trace_ring_records=256\n'
+            printf 'trace_decoder_sha256=%s\n' \
+                "$(sha256sum "${repo_root}/tools/aymos_lab/trace.py" | awk '{print $1}')"
+        fi
         printf 'command_file=command.txt\n'
         printf 'robot_suite=%s\n' "${robot_suite}"
         printf 'host_timeout_seconds=%s\n' "${host_timeout}"
@@ -173,6 +189,23 @@ for ((attempt = 1; attempt <= repeat; attempt++)); do
             > "${attempt_dir}/uart.txt" 2> "${attempt_dir}/uart-validation.log"
         status=$?
         set -e
+    fi
+
+    if ((status == 0)) && [[ "${app}" == trace ]]; then
+        if ((attempt == 1)); then
+            cp -- "${attempt_dir}/trace.bin" "${output_root}/reference-trace.bin"
+            cp -- "${attempt_dir}/trace.json" "${output_root}/reference-trace.json"
+        elif ! cmp -- "${output_root}/reference-trace.bin" \
+            "${attempt_dir}/trace.bin"; then
+            printf 'renode-test: trace attempt %d is not byte-equivalent\n' \
+                "${attempt}" > "${attempt_dir}/trace-equivalence.log"
+            status=1
+        elif ! cmp -- "${output_root}/reference-trace.json" \
+            "${attempt_dir}/trace.json"; then
+            printf 'renode-test: trace attempt %d is not semantically equivalent\n' \
+                "${attempt}" > "${attempt_dir}/trace-equivalence.log"
+            status=1
+        fi
     fi
 
     if ((status != 0)); then

@@ -25,6 +25,10 @@ case "${app}" in
         uart_validator="${script_dir}/verify_allocator_uart.py"
         default_virtual_duration="0.5"
         ;;
+    trace)
+        uart_validator="${script_dir}/verify_trace_uart.py"
+        default_virtual_duration="0.5"
+        ;;
     *)
         printf 'renode-run: unsupported AYMOS_APP: %s\n' "${app}" >&2
         exit 2
@@ -119,6 +123,18 @@ renode_build="$(printf '%s' "${renode_build}" | tr '\n' ' ' | sed 's/[[:space:]]
     printf 'platform_sha256=%s\n' "$(sha256sum "${platform}" | awk '{print $1}')"
     printf 'renode_version=1.16.1\n'
     printf 'renode_build=%s\n' "${renode_build}"
+    printf 'python_version=3.12.13\n'
+    printf 'uart_validator_sha256=%s\n' \
+        "$(sha256sum "${uart_validator}" | awk '{print $1}')"
+    if [[ "${app}" == trace ]]; then
+        printf 'trace_schema_version=1\n'
+        printf 'trace_framing_version=1\n'
+        printf 'trace_record_size=32\n'
+        printf 'trace_footer_size=28\n'
+        printf 'trace_ring_records=256\n'
+        printf 'trace_decoder_sha256=%s\n' \
+            "$(sha256sum "${repo_root}/tools/aymos_lab/trace.py" | awk '{print $1}')"
+    fi
     printf 'command_file=command.txt\n'
     printf 'emulator_arguments=--console --disable-gui --plain -e <monitor_command>\n'
     printf 'host_timeout_seconds=%s\n' "${host_timeout}"

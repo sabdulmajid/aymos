@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   firmware-and-renode:
-    name: F401RE boot, lifecycle, EDF, and allocator
+    name: F401RE boot, lifecycle, EDF, allocator, and trace
     runs-on: ubuntu-24.04
     timeout-minutes: 20
 
@@ -45,6 +45,9 @@ jobs:
           make allocator
           RENODE_REPEAT=3 make test-allocator
 
+      - name: Build, decode, and compare three structured ARM traces
+        run: make test-trace
+
       - name: Retain firmware and emulator diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -57,5 +60,6 @@ jobs:
             build/nucleo_f401re/lifecycle/
             build/nucleo_f401re/edf/
             build/nucleo_f401re/allocator/
+            build/nucleo_f401re/trace/
             build/native/
             build/renode/

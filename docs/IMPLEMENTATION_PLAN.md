@@ -1,8 +1,8 @@
 # AymOS Real-Time Systems Lab implementation plan
 
-Status: PRs 1 through 4 are merged. PR 5 is implemented at its committed head
-and has passed its native and ARM gates, independent adversarial review,
-committed-state checks, and hosted CI.
+Status: PRs 1 through 5 are merged. PR 6 is implemented on top of PR 5. Its
+formal adversarial findings are corrected, its final re-review is approved,
+and its focused, inherited, committed-state, and hosted regression gates pass.
 
 This document defines the first trustworthy vertical slice of AymOS. It is a
 campaign plan, not a claim that the described target behavior exists today.
@@ -827,6 +827,50 @@ Acceptance evidence:
 
 Gate: timeline work cannot start until a complete validated guest trace exists.
 
+Local PR 6 implementation evidence (2026-08-02): schema 1 is a compile-time
+asserted, naturally aligned 32-byte little-endian record. The portable ring has
+256 static records, bounded five-record atomic batches, release/acquire fences,
+drop-new history preservation, attempt sequences, saturating loss counters, and
+an explicit open-to-closed terminal snapshot. Native ASan/UBSan tests pass 103
+checks, including all 22 schema event IDs, wrap, insufficient-space whole-batch
+drops, nonrecursive overflow recovery before later attempts, close-before-drain,
+and post-close rejection. ARM
+disassembly contains `dmb ish` before publication and before consumer copy.
+
+Selection summary/candidate batches emit user READY mask, purpose, incumbent,
+yield exclusion, eligibility, full 64-bit deadlines, priority, winner, and the
+exact deadline/priority/stable-ID or fallback reason. SysTick and runtime-create
+probes are separate from actual PendSV dispatch snapshots. No trace producer
+allocates, formats, or transmits UART. Final idle closes producers under one
+saved/restored PRIMASK, drains in thread mode, CRC-frames records, and transmits
+a direct 28-byte footer with attempted/emitted/dropped/final-sequence/flags and
+final guest tick.
+
+The locked-Python tests pass 23 groups: 18 generic malformed/schema/semantic
+groups and five exact-projection mutation groups. The generic decoder accepts
+coherent event IDs 1 through 21, validates event 22 while rejecting it as
+inconsistent with a claimed complete zero-loss run, and rejects loss, gaps,
+corruption, invalid event/task/payload/selection state, bounds, footer errors,
+and trailing bytes. Its shared file reader rejects nonregular and oversized
+inputs without unbounded reads. It also detects a size change to the opened
+file during the read.
+Diagnostic resynchronization scans at most 4096 bytes and never makes a damaged
+stream acceptable.
+
+A fresh real Cortex-M4 Renode run passed the exact 102-record all-event
+projection with footer tick 15 and no drops. The workload proves a masked
+direct runtime-create request coalesced with a pending SysTick request, with
+PendSV reporting the actual selected task rather than the earlier probe target;
+task-slot reuse; repeated idle-to-user preemption; yield; two sleep/wake pairs;
+allocation/free; four met deadlines; one miss; safe exit/reclaim; and terminal
+idle. The formal review corrections passed the 103-check native trace suite,
+all 23 host trace tests, a ten-run byte/JSON-equivalence gate, a
+network-isolated trace run, and all inherited native/host and three-run
+boot/lifecycle/EDF/allocator regressions. Independent re-review,
+committed-state evidence, and hosted CI passed before merge. The 8192-byte ring
+reduces available dynamic heap, and all traces remain functional emulator
+evidence without timing claims.
+
 ### PR 7: Deadline Lab workload and host timeline
 
 Base: PR 6 head.
@@ -939,7 +983,7 @@ only after its own acceptance evidence exists.
 | Exception-frame correctness | Existing assembly is not trusted merely because it links. | Independent architecture review and Renode lifecycle test in PR 3. |
 | Tick wraparound contract | Relative durations remain below half the 32-bit range; runtime due/EDF order uses full 64-bit monotonic keys and fails before 64-bit exhaustion. | Native low-word wrap, exact-half, greater-than-half overdue, strict-order, and exhaustion-boundary tests in PR 4. |
 | Allocator ownership on task exit | Resolved in PR 5 implementation: fixed stack reclaim remains deferred; every non-stack allocation is task-ID owned and auto-released by a bounded mark/coalesce sweep in PendSV before slot reuse. This prevents outstanding blocks from being inherited, but tags are not generation-aware stale-pointer detection; pointers retained after free/exit are invalid. This bookkeeping is not isolation. | Preserve native owner tests, ARM slot-reuse evidence, stale-pointer documentation, and linear interrupt-masked cleanup latency. |
-| Trace record/wire encoding | Naturally aligned 32-byte records, guest tick/sequence ordering, selection snapshots, drop-new, and terminal loss footer are fixed directions; exact field packing/framing remains open. | Schema review and corrupt-stream tests in PR 6. |
+| Trace record/wire encoding | Resolved in PR 6 implementation: naturally aligned 32-byte schema-1 records; `AYMT` framing version 1; CRC32; 28-byte terminal footer; strict bounded decoder; raw records and canonical JSON artifacts. | Preserve schema tests and require a version change for incompatible layouts. |
 | Trace perturbation | Events change guest execution cost even without blocking output. Treat results as explanatory ordering, not timing proof. | Record overflow/loss and document in PR 6. |
 | Deterministic execution demand | Use deterministic guest work/release units; never host wall-clock loops. | Repeated semantic traces in PRs 4 and 7. |
 | Python/Plotly footprint | Plotly is acceptable only as a locked host dependency and standalone output; a smaller renderer remains possible. | PR 7 prototype and dependency review. |
