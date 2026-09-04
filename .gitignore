@@ -2,3 +2,5 @@
 /.tools/
 /build/
 /runs/
+__pycache__/
+*.py[cod]

@@ -1,25 +1,28 @@
-# Reproducible F401RE build
+# Reproducible F401RE build and Renode boot
 
 ## Supported environment
 
-PR 1 supports Linux x86_64. The bootstrap requires:
+The verified host path supports Linux x86_64. The bootstrap requires:
 
 - `awk`;
 - Bash;
 - Git 2.25 or newer (sparse checkout and partial clone support);
 - curl 7.61 or newer;
 - GNU Make;
-- `file`, `grep`, `od`, `sha256sum`, `stat`, `tar`, and `xz`; and
+- `cmp`, `env`, `file`, `find`, `grep`, `od`, `readlink`, `sha256sum`, `sort`,
+  `stat`, `tar`, `timeout`, `xargs`, and `xz`; and
 - network access during `make setup`.
 
-No root access, container daemon, global ARM compiler, or global STM32 headers
-are used. The Makefile rejects command-line or environment definitions of
+No root access, container daemon, global ARM compiler, global Renode, system
+Python package, or global STM32 header is used. The Makefile rejects
+command-line or environment definitions of
 `ARM_GNU_DIR`, `CROSS_COMPILE`, `CC`, `OBJCOPY`, `OBJDUMP`, `READELF`, `SIZE`,
-and `NM`; this prevents a caller, including `make -e`, from bypassing the
-locked-tool integrity gate. `BOARD` and `APP` remain ordinary documented build
-selectors. Arm's x86_64 toolchain is built on RHEL 8; hosts older than RHEL 8 or
-Ubuntu 20.04 may lack compatible runtime libraries. Setup executes the compiler
-and reports that failure rather than allowing a later, ambiguous build error.
+`NM`, `RENODE_DIR`, `RENODE`, `PYTHON_ENV_DIR`, and `PYTHON`; this prevents a
+caller, including `make -e`, from bypassing the locked-tool integrity gate.
+`BOARD` and `APP` remain ordinary documented build selectors. Arm's x86_64
+toolchain is built on RHEL 8; hosts older than RHEL 8 or Ubuntu 20.04 may lack
+compatible runtime libraries. Setup executes the tools and reports an
+incompatibility rather than allowing a later, ambiguous error.
 
 Only Linux x86_64 is claimed in this PR. Other host architectures must add and
 validate their own locked tool archive instead of falling back to `PATH`.
@@ -38,7 +41,11 @@ Inputs are declared in `tools/setup/dependencies.lock`:
 - Arm GNU Toolchain 14.3.rel1 for x86_64 `arm-none-eabi`;
 - CMSIS Core from STM32CubeF4 v1.28.3;
 - the STM32F4 CMSIS device commit referenced by that Cube release; and
-- the STM32F4 HAL commit referenced by that Cube release.
+- the STM32F4 HAL commit referenced by that Cube release;
+- Renode 1.16.1's portable .NET x86_64 archive;
+- CPython 3.12.13 from the locked `python-build-standalone` release; and
+- exact wheels and hashes for Robot Framework 6.1, retryfailed 0.2.0, psutil
+  5.9.8, PyYAML 6.0.3, and telnetlib3 2.0.8.
 
 The Arm archive byte size and SHA-256 are checked before extraction. Every
 consumed Arm executable (`gcc`, `as`, `ld`, `nm`, `objcopy`, `objdump`,
@@ -47,6 +54,20 @@ manifest ties them back to the verified archive. STM32 dependencies are checked
 for exact HEAD and for modified/untracked files. Required sources, headers, and
 licenses are validated. The Cube parent is blob-filtered and sparse: projects,
 middleware, and excluded blobs are not downloaded.
+
+Renode, CPython, and the Renode virtual environment have deterministic tree
+manifests covering directory paths, regular-file paths and hashes, and symlink
+paths and target strings. Validation rejects additions, removals, type changes,
+target changes, and special nodes. Only regular `*.pyc` files directly under
+`__pycache__` are excluded as interpreter-generated mutable cache state. All
+locked-Python commands also unset `PYTHONHOME` and `PYTHONPATH`, set
+`PYTHONNOUSERSITE=1`, and disable automatic bytecode writes.
+
+Python wheels are installed offline with `--no-index`, `--only-binary`, and
+`--require-hashes`. Renode upstream names psutil 5.9.3; AymOS intentionally
+uses a locally tested 5.9.8 substitution because 5.9.3 has no CPython 3.12
+wheel and would add an undeclared host C compiler input. This is not described
+as satisfying an exact `==5.9.3` constraint.
 
 Setup uses a repository-local concurrency lock. Interrupted temporary paths use
 unique names and are cleaned on normal exit, SIGINT, and SIGTERM. A complete
@@ -142,6 +163,9 @@ ignored `.tools/` and `.deps/` directories, then run:
 make setup
 make setup
 make firmware
+make test
+make run
+make test-emulator
 ```
 
 The second setup invocation proves idempotence. Do not point cleanup commands at
@@ -158,13 +182,87 @@ The legacy AymOS allocator is not linked into the boot app. Its later hardening
 will consume the already-reserved linker region. PR 1 therefore establishes
 non-overlapping ownership without claiming that the allocator itself is fixed.
 
+## Headless Renode workflow
+
+Run the host-side model and UART validator tests:
+
+```sh
+make test
+```
+
+Boot the exact `build/nucleo_f401re/boot/aymos.elf` for 0.2 seconds of Renode
+virtual time and print the validated raw USART2 stream:
+
+```sh
+make run
+```
+
+Run the Robot integration test:
+
+```sh
+make test-emulator
+```
+
+Robot independently checks that address zero aliases the flash vector, the
+initial MSP word is `0x20018000`, execution reaches both UART lines, and VTOR is
+`0x08000000` after startup. Its UART wait is five seconds, its Robot case limit
+is ten seconds, and the entire host process is bounded by GNU `timeout` with a
+TERM/KILL sequence. The final oracle parses raw UART bytes and requires exactly
+one of each line, in order:
+
+```text
+AYMOS READY\r\n
+AYMOS SMOKE SYSTICK=1 SVC=1\r\n
+```
+
+Every invocation gets a new directory under `build/renode/run/` or
+`build/renode/test/`. It retains command and metadata files, ELF/platform
+hashes, raw and decoded UART, emulator logs, and Robot XML/HTML outputs. On
+failure the scripts return nonzero, print the retained directory, and show the
+tails of available logs plus a raw UART hex dump.
+
+Ten independent boots exercise reset/startup repeatability:
+
+```sh
+RENODE_REPEAT=10 make test-emulator
+```
+
+After setup, the checked runtime inputs contain no URLs. Where the host permits
+unprivileged user/network namespaces, the actual Robot/Renode process can also
+be run with all non-loopback networking removed:
+
+```sh
+make test-emulator-offline
+```
+
+This optional evidence command needs host `unshare` and `ip`; it restores only
+loopback because Robot communicates with Renode through a bounded localhost
+server. The namespace command is itself under the outer timeout.
+
+The repository model intentionally covers only this slice: flash and its reset
+alias, SRAM, Cortex-M4/NVIC/SysTick, flash control, RCC/PWR, RTC/EXTI needed by
+the model, GPIOA, USART2, and the user LED. Renode currently reports visible
+warnings for unmodeled flash cache-enable bits and one RCC reserved bit during
+HAL clock initialization. Those warnings are retained in `emulator.log`; the
+firmware nevertheless completes HAL initialization and both interrupt smokes.
+The model does not represent every F401RE peripheral or register.
+
+The CI workflow runs setup, firmware validation, host tests, and three fresh
+Renode boots on Ubuntu 24.04, then retains build and emulator artifacts even on
+failure. The workflow file is locally reviewed; only a GitHub run can verify
+the hosted-runner environment.
+
 ## Application and hardware status
 
 Startup `SystemInit` configures VTOR before `APP=boot` initializes HAL, an
-84 MHz HSI/PLL clock, PA5, and USART2. The app then emits
-`AYMOS BOOT F401RE` and waits for interrupts. SysTick only advances the HAL
-tick; it does not call legacy scheduler code.
+84 MHz HSI/PLL clock, PA5, and USART2. The app emits `AYMOS READY`, waits until
+the application-local SysTick flag is observed, invokes SVC, checks its
+application-local flag, emits the smoke result from thread mode, and then
+waits for interrupts. Neither handler prints, schedules, switches context, nor
+uses PSP/PendSV. Real kernel SVC/PendSV/PSP evidence remains PR 3 scope.
 
-Renode boot/testing is PR 2. Physical flashing is not validated. `make flash`
-builds the binary, prints that limitation, and exits nonzero rather than running
-an undocumented global programmer.
+Physical flashing is not validated. `make flash` builds the binary, prints that
+limitation, and exits nonzero rather than running an undocumented global
+programmer. Renode execution is functional model evidence only; its virtual or
+host time does not prove hardware timing, interrupt latency, WCET, or hard
+real-time behavior.

@@ -16,9 +16,21 @@ readonly deps_dir="${repo_root}/.deps"
 readonly downloads_dir="${tools_dir}/downloads"
 readonly toolchain_dir="${tools_dir}/${ARM_GNU_DIRECTORY}"
 readonly toolchain_marker="${toolchain_dir}/.aymos-install-manifest"
+readonly renode_dir="${tools_dir}/${RENODE_DIRECTORY}"
+readonly python_dir="${tools_dir}/${PYTHON_DIRECTORY}"
+readonly python_venv_dir="${tools_dir}/${PYTHON_VENV_DIRECTORY}"
+readonly wheels_dir="${downloads_dir}/python-wheels"
+readonly python_requirements="${script_dir}/setup/renode-requirements.lock"
+readonly tree_manifest_name=".aymos-tree-manifest"
+readonly legacy_tree_file_list_name=".aymos-file-list-sha256"
 readonly setup_lock_dir="${tools_dir}/setup.lock"
+readonly -a locked_python_env=(
+    env -u PYTHONHOME -u PYTHONPATH
+    PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1
+)
 temporary_paths=()
 setup_lock_owned=false
+python_venv_owned=false
 
 die() {
     printf 'setup: error: %s\n' "$*" >&2
@@ -27,6 +39,10 @@ die() {
 
 note() {
     printf 'setup: %s\n' "$*"
+}
+
+renode_version_output() {
+    timeout --signal=TERM --kill-after=2s 10s "$1" --version
 }
 
 cleanup_temporary_paths() {
@@ -47,6 +63,10 @@ cleanup_temporary_paths() {
     if [[ "${setup_lock_owned}" == true && -d "${setup_lock_dir}" ]]; then
         rm -f -- "${setup_lock_dir}/pid"
         rmdir -- "${setup_lock_dir}"
+    fi
+
+    if [[ "${python_venv_owned}" == true && -d "${python_venv_dir}" ]]; then
+        rm -rf -- "${python_venv_dir}"
     fi
 }
 
@@ -131,6 +151,105 @@ prepare_toolchain_archive() {
         die "downloaded toolchain mismatch: expected ${ARM_GNU_SIZE}/${ARM_GNU_SHA256}, got ${size}/${digest}"
     fi
     mv -- "${partial_path}" "${archive_path}"
+}
+
+prepare_locked_download() {
+    local label="$1"
+    local url="$2"
+    local expected="$3"
+    local expected_size="$4"
+    local archive_path="$5"
+    local partial_path="${archive_path}.part"
+    local size
+    local digest
+
+    if archive_matches "${archive_path}" "${expected}" "${expected_size}"; then
+        return
+    elif [[ -f "${archive_path}" ]]; then
+        quarantine_file "${archive_path}" archive
+    fi
+
+    if [[ -f "${partial_path}" ]]; then
+        size="$(stat -c '%s' "${partial_path}")"
+        if ((size == expected_size)); then
+            if archive_matches "${partial_path}" "${expected}" "${expected_size}"; then
+                mv -- "${partial_path}" "${archive_path}"
+                return
+            fi
+            quarantine_file "${partial_path}" checksum
+        elif ((size > expected_size)); then
+            quarantine_file "${partial_path}" oversized
+        fi
+    fi
+
+    note "downloading ${label}"
+    curl --fail --location --retry 3 --silent --show-error --continue-at - \
+        --output "${partial_path}" "${url}"
+    if ! archive_matches "${partial_path}" "${expected}" "${expected_size}"; then
+        size="$(stat -c '%s' "${partial_path}")"
+        digest="$(sha256_file "${partial_path}")"
+        quarantine_file "${partial_path}" downloaded
+        die "download mismatch for ${label}: expected ${expected_size}/${expected}, got ${size}/${digest}"
+    fi
+    mv -- "${partial_path}" "${archive_path}"
+}
+
+emit_tree_manifest() {
+    local directory="$1"
+    local special_node_present
+
+    (
+        cd -- "${directory}"
+        special_node_present="$(
+            find . ! -type d ! -type f ! -type l -printf x -quit
+        )" || return 1
+        if [[ -n "${special_node_present}" ]]; then
+            printf 'setup: unsupported special filesystem node in dependency: %s\n' \
+                "${directory}" >&2
+            return 1
+        fi
+
+        printf 'AYMOS_TREE_V3\0DIRECTORIES\0'
+        find . -type d -print0 | sort -z || return 1
+
+        printf 'FILES\0'
+        # Bytecode is interpreter-generated mutable cache state. Because the
+        # -type f filter comes first, only regular *.pyc files directly below
+        # __pycache__ are ignored; matching symlinks remain in the next section.
+        # Hash regular files in ARG_MAX-sized batches rather than forking once
+        # per file. sha256sum -z keeps arbitrary path bytes unambiguous.
+        find . -type f ! -path "./${tree_manifest_name}" \
+            ! \( -path '*/__pycache__/*.pyc' \
+                ! -path '*/__pycache__/*/*.pyc' \) -print0 | sort -z | \
+            xargs -0 -r sha256sum -z -- || return 1
+
+        printf 'SYMLINKS\0'
+        # NUL cannot occur in a path or symlink target. The record prefix and
+        # separator make the path/target association explicit; paths are also
+        # present directly in every sorted record.
+        find . -type l -printf 'L\034%p\034%l\0' | sort -z
+    )
+}
+
+write_tree_manifest() {
+    local directory="$1"
+    local manifest="${directory}/${tree_manifest_name}"
+
+    # Remove the superseded regular-file-only marker when migrating a local
+    # development install. Clean installs never contain it.
+    rm -f -- "${directory}/${legacy_tree_file_list_name}"
+    emit_tree_manifest "${directory}" > "${manifest}"
+}
+
+validate_tree_manifest() {
+    local directory="$1"
+    local label="$2"
+    local manifest="${directory}/${tree_manifest_name}"
+
+    [[ -f "${manifest}" && ! -L "${manifest}" ]] ||
+        die "${label} install manifest is missing or is not a regular file"
+    emit_tree_manifest "${directory}" | cmp --silent "${manifest}" - ||
+        die "${label} filesystem tree was modified after setup"
 }
 
 tool_hash() {
@@ -222,6 +341,158 @@ install_toolchain() {
     mv -- "${extract_parent}/${ARM_GNU_DIRECTORY}" "${toolchain_dir}"
     rmdir -- "${extract_parent}"
     write_toolchain_marker
+}
+
+install_renode() {
+    local archive_path="${downloads_dir}/${RENODE_ARCHIVE}"
+    local extract_parent
+    local version_output
+
+    prepare_locked_download "Renode ${RENODE_VERSION}" "${RENODE_URL}" \
+        "${RENODE_SHA256}" "${RENODE_SIZE}" "${archive_path}"
+
+    if [[ -x "${renode_dir}/renode" ]]; then
+        validate_tree_manifest "${renode_dir}" "Renode"
+        version_output="$(renode_version_output "${renode_dir}/renode")" ||
+            die "installed Renode version command failed or timed out"
+        [[ "${version_output}" == *"Renode v${RENODE_VERSION}."* ]] ||
+            die "unexpected installed Renode version"
+        note "Renode ${RENODE_VERSION} already installed"
+        return
+    fi
+
+    [[ ! -e "${renode_dir}" ]] ||
+        die "incomplete Renode directory exists: ${renode_dir}"
+    extract_parent="${tools_dir}/.extract-${RENODE_DIRECTORY}-$$"
+    temporary_paths+=("${extract_parent}")
+    mkdir -p -- "${extract_parent}"
+    note "extracting Renode ${RENODE_VERSION}"
+    tar -xzf "${archive_path}" -C "${extract_parent}"
+    [[ -x "${extract_parent}/${RENODE_ARCHIVE_DIRECTORY}/renode" ]] ||
+        die "Renode archive did not contain the expected executable"
+    [[ -x "${extract_parent}/${RENODE_ARCHIVE_DIRECTORY}/renode-test" ]] ||
+        die "Renode archive did not contain renode-test"
+    [[ -f "${extract_parent}/${RENODE_ARCHIVE_DIRECTORY}/licenses/renode-license" ]] ||
+        die "Renode archive did not contain its license"
+    mv -- "${extract_parent}/${RENODE_ARCHIVE_DIRECTORY}" "${renode_dir}"
+    rmdir -- "${extract_parent}"
+    {
+        printf 'archive=%s\n' "${RENODE_ARCHIVE}"
+        printf 'archive_sha256=%s\n' "${RENODE_SHA256}"
+        printf 'archive_size=%s\n' "${RENODE_SIZE}"
+    } > "${renode_dir}/.aymos-install-source"
+    write_tree_manifest "${renode_dir}"
+}
+
+install_python() {
+    local archive_path="${downloads_dir}/${PYTHON_ARCHIVE}"
+    local extract_parent
+    local actual_version
+
+    prepare_locked_download "CPython ${PYTHON_VERSION}" "${PYTHON_URL}" \
+        "${PYTHON_SHA256}" "${PYTHON_SIZE}" "${archive_path}"
+
+    if [[ -x "${python_dir}/bin/python3" ]]; then
+        validate_tree_manifest "${python_dir}" "CPython"
+        actual_version="$("${locked_python_env[@]}" \
+            "${python_dir}/bin/python3" \
+            -c 'import platform; print(platform.python_version())')"
+        [[ "${actual_version}" == "${PYTHON_VERSION}" ]] ||
+            die "installed Python is ${actual_version}, expected ${PYTHON_VERSION}"
+        note "CPython ${PYTHON_VERSION} already installed"
+        return
+    fi
+
+    [[ ! -e "${python_dir}" ]] ||
+        die "incomplete Python directory exists: ${python_dir}"
+    extract_parent="${tools_dir}/.extract-${PYTHON_DIRECTORY}-$$"
+    temporary_paths+=("${extract_parent}")
+    mkdir -p -- "${extract_parent}"
+    note "extracting CPython ${PYTHON_VERSION}"
+    tar -xzf "${archive_path}" -C "${extract_parent}"
+    [[ -x "${extract_parent}/python/bin/python3" ]] ||
+        die "Python archive did not contain the expected interpreter"
+    [[ -f "${extract_parent}/python/lib/python3.12/LICENSE.txt" ]] ||
+        die "Python archive did not contain its license"
+    mv -- "${extract_parent}/python" "${python_dir}"
+    rmdir -- "${extract_parent}"
+    {
+        printf 'archive=%s\n' "${PYTHON_ARCHIVE}"
+        printf 'archive_sha256=%s\n' "${PYTHON_SHA256}"
+        printf 'archive_size=%s\n' "${PYTHON_SIZE}"
+    } > "${python_dir}/.aymos-install-source"
+    write_tree_manifest "${python_dir}"
+}
+
+install_python_wheels() {
+    local count="${#RENODE_PYTHON_WHEEL_NAMES[@]}"
+    local index
+
+    ((count == ${#RENODE_PYTHON_WHEEL_URLS[@]} &&
+       count == ${#RENODE_PYTHON_WHEEL_SHA256S[@]} &&
+       count == ${#RENODE_PYTHON_WHEEL_SIZES[@]})) ||
+        die "Python wheel lock arrays have different lengths"
+    mkdir -p -- "${wheels_dir}"
+    for ((index = 0; index < count; index++)); do
+        prepare_locked_download \
+            "Python wheel ${RENODE_PYTHON_WHEEL_NAMES[index]}" \
+            "${RENODE_PYTHON_WHEEL_URLS[index]}" \
+            "${RENODE_PYTHON_WHEEL_SHA256S[index]}" \
+            "${RENODE_PYTHON_WHEEL_SIZES[index]}" \
+            "${wheels_dir}/${RENODE_PYTHON_WHEEL_NAMES[index]}"
+    done
+}
+
+validate_python_environment() {
+    local actual_version
+    local resolved_python
+
+    [[ -x "${python_venv_dir}/bin/python3" ]] ||
+        die "project Python virtual environment is incomplete"
+    validate_tree_manifest "${python_venv_dir}" "Python virtual environment"
+    resolved_python="$(readlink -f "${python_venv_dir}/bin/python3")"
+    [[ "${resolved_python}" == "$(readlink -f "${python_dir}/bin/python3")" ]] ||
+        die "virtual environment does not use the locked Python interpreter"
+    actual_version="$("${locked_python_env[@]}" \
+        "${python_venv_dir}/bin/python3" -c \
+        'import platform; print(platform.python_version())')"
+    [[ "${actual_version}" == "${PYTHON_VERSION}" ]] ||
+        die "virtual environment uses Python ${actual_version}, expected ${PYTHON_VERSION}"
+    "${locked_python_env[@]}" "${python_venv_dir}/bin/python3" -c \
+        'from importlib.metadata import version
+import psutil, RetryFailed, robot, telnetlib3, yaml
+assert robot.__version__ == "6.1"
+assert psutil.__version__ == "5.9.8"
+assert yaml.__version__ == "6.0.3"
+assert telnetlib3.__version__ == "2.0.8"
+assert version("robotframework-retryfailed") == "0.2.0"' ||
+        die "locked Renode Python packages failed their import/version check"
+}
+
+install_python_environment() {
+    if [[ -d "${python_venv_dir}" ]]; then
+        validate_python_environment
+        note "Renode Python environment already installed"
+        return
+    fi
+
+    [[ ! -e "${python_venv_dir}" ]] ||
+        die "non-directory Python environment path exists: ${python_venv_dir}"
+    note "creating the Renode Python environment"
+    python_venv_owned=true
+    "${locked_python_env[@]}" "${python_dir}/bin/python3" -m venv \
+        "${python_venv_dir}"
+    "${locked_python_env[@]}" PIP_DISABLE_PIP_VERSION_CHECK=1 \
+        "${python_venv_dir}/bin/python3" -m pip install \
+        --no-index --only-binary=:all: --require-hashes \
+        --find-links "${wheels_dir}" --requirement "${python_requirements}"
+    {
+        printf 'python_archive_sha256=%s\n' "${PYTHON_SHA256}"
+        printf 'requirements_sha256=%s\n' "$(sha256_file "${python_requirements}")"
+    } > "${python_venv_dir}/.aymos-install-source"
+    write_tree_manifest "${python_venv_dir}"
+    validate_python_environment
+    python_venv_owned=false
 }
 
 validate_git_dependency() {
@@ -317,6 +588,10 @@ install_cube_cmsis_core() {
 validate_installation() {
     local compiler="${toolchain_dir}/bin/arm-none-eabi-gcc"
     local gcc_version
+    local actual_version
+    local count
+    local index
+    local renode_version
 
     [[ -x "${compiler}" ]] || die "compiler installation is incomplete"
     validate_toolchain_marker
@@ -378,23 +653,66 @@ validate_installation() {
             die "build-consumed STM32 HAL file is missing: ${consumed}"
     done
 
-    note "validated Arm GCC ${gcc_version} and all locked STM32 dependencies"
+    [[ -x "${renode_dir}/renode" && -x "${renode_dir}/renode-test" ]] ||
+        die "Renode installation is incomplete"
+    validate_tree_manifest "${renode_dir}" "Renode"
+    grep -Fxq "archive=${RENODE_ARCHIVE}" "${renode_dir}/.aymos-install-source" ||
+        die "Renode source manifest archive mismatch"
+    grep -Fxq "archive_sha256=${RENODE_SHA256}" \
+        "${renode_dir}/.aymos-install-source" ||
+        die "Renode source manifest checksum mismatch"
+    renode_version="$(renode_version_output "${renode_dir}/renode")" ||
+        die "installed Renode version command failed or timed out"
+    [[ "${renode_version}" == *"Renode v${RENODE_VERSION}."* ]] ||
+        die "unexpected Renode version output"
+
+    [[ -x "${python_dir}/bin/python3" ]] ||
+        die "locked Python installation is incomplete"
+    validate_tree_manifest "${python_dir}" "CPython"
+    grep -Fxq "archive=${PYTHON_ARCHIVE}" "${python_dir}/.aymos-install-source" ||
+        die "Python source manifest archive mismatch"
+    grep -Fxq "archive_sha256=${PYTHON_SHA256}" \
+        "${python_dir}/.aymos-install-source" ||
+        die "Python source manifest checksum mismatch"
+    actual_version="$("${locked_python_env[@]}" \
+        "${python_dir}/bin/python3" \
+        -c 'import platform; print(platform.python_version())')"
+    [[ "${actual_version}" == "${PYTHON_VERSION}" ]] ||
+        die "installed Python is ${actual_version}, expected ${PYTHON_VERSION}"
+
+    count="${#RENODE_PYTHON_WHEEL_NAMES[@]}"
+    for ((index = 0; index < count; index++)); do
+        archive_matches "${wheels_dir}/${RENODE_PYTHON_WHEEL_NAMES[index]}" \
+            "${RENODE_PYTHON_WHEEL_SHA256S[index]}" \
+            "${RENODE_PYTHON_WHEEL_SIZES[index]}" ||
+            die "locked Python wheel is missing or modified: ${RENODE_PYTHON_WHEEL_NAMES[index]}"
+    done
+    validate_python_environment
+
+    note "validated Arm GCC ${gcc_version}, STM32 dependencies, Renode ${RENODE_VERSION}, and Python ${PYTHON_VERSION}"
 }
 
 check_host() {
-    [[ "$(uname -s)" == Linux ]] || die "PR 1 setup currently supports Linux only"
-    [[ "$(uname -m)" == x86_64 ]] || die "PR 1 setup currently supports Linux x86_64 only"
+    [[ "$(uname -s)" == Linux ]] || die "setup currently supports Linux only"
+    [[ "$(uname -m)" == x86_64 ]] || die "setup currently supports Linux x86_64 only"
 
     require_command awk
     require_command curl
+    require_command cmp
+    require_command env
     require_command file
+    require_command find
     require_command grep
     require_command git
     require_command make
     require_command od
+    require_command readlink
     require_command sha256sum
+    require_command sort
     require_command stat
     require_command tar
+    require_command timeout
+    require_command xargs
     require_command xz
 
     local git_version
@@ -444,6 +762,10 @@ main() {
     install_cube_cmsis_core
     install_git_dependency cmsis_device_f4 "${STM32_DEVICE_URL}" "${STM32_DEVICE_COMMIT}"
     install_git_dependency stm32f4xx_hal_driver "${STM32_HAL_URL}" "${STM32_HAL_COMMIT}"
+    install_renode
+    install_python
+    install_python_wheels
+    install_python_environment
     validate_installation
 }
 

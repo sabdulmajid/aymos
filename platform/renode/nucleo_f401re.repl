@@ -1,0 +1,80 @@
+// AymOS's deliberately small NUCLEO-F401RE model for Renode 1.16.1.
+//
+// This describes only the hardware used by the current boot slice. It is not a
+// cycle-accurate board model and must not be used to make physical timing or
+// interrupt-latency claims.
+
+flash: Memory.MappedMemory @ {
+        sysbus 0x00000000;
+        sysbus 0x08000000
+    }
+    size: 0x00080000
+
+sram: Memory.MappedMemory @ sysbus 0x20000000
+    size: 0x00018000
+
+flashController: MTD.STM32F4_FlashController @ {
+        sysbus 0x40023C00;
+        sysbus new Bus.BusMultiRegistration { address: 0x1FFFC000; size: 0x100; region: "optionBytes" }
+    }
+    flash: flash
+
+usart2: UART.STM32_UART @ sysbus <0x40004400, +0x100>
+    -> nvic@38
+
+nvic: IRQControllers.NVIC @ sysbus 0xE000E000
+    priorityMask: 0xF0
+    systickFrequency: 84000000
+    IRQ -> cpu@0
+
+cpu: CPU.CortexM @ sysbus
+    cpuType: "cortex-m4"
+    nvic: nvic
+
+pwr: Miscellaneous.STM32_PWR @ sysbus 0x40007000
+
+rtc: Timers.STM32F4_RTC @ sysbus 0x40002800
+    AlarmIRQ -> nvic@41
+
+rcc: Miscellaneous.STM32F4_RCC @ sysbus 0x40023800
+    rtcPeripheral: rtc
+
+exti: IRQControllers.STM32F4_EXTI @ sysbus 0x40013C00
+    numberOfOutputLines: 24
+    [0-4] -> nvic@[6-10]
+    [5-9] -> nvicInput23@[0-4]
+    [10-15] -> nvicInput40@[0-5]
+    [16, 17, 18, 22] -> nvic@[1, 41, 42, 3]
+
+nvicInput23: Miscellaneous.CombinedInput @ none
+    numberOfInputs: 5
+    -> nvic@23
+
+nvicInput40: Miscellaneous.CombinedInput @ none
+    numberOfInputs: 6
+    -> nvic@40
+
+gpioPortA: GPIOPort.STM32_GPIOPort @ sysbus <0x40020000, +0x400>
+    modeResetValue: 0xA8000000
+    outputSpeedResetValue: 0x0C000000
+    pullUpPullDownResetValue: 0x64000000
+    numberOfAFs: 16
+    invertedAFPins: [[5, 3], [7, 1, 3]]
+    [0-15] -> exti@[0-15]
+
+userLed: Miscellaneous.LED @ gpioPortA 5
+
+bitbandPeripherals: Miscellaneous.BitBanding @ sysbus <0x42000000, +0x02000000>
+    peripheralBase: 0x40000000
+
+bitbandSram: Miscellaneous.BitBanding @ sysbus <0x22000000, +0x00200000>
+    peripheralBase: 0x20000000
+
+sysbus:
+    init:
+        // The F4 model does not currently expose every RCC register used by
+        // STM32 HAL. These narrow tags preserve deterministic reset values and
+        // make unsupported accesses visible in emulator.log.
+        Tag <0x40021000, 0x40021003> "UNMODELED_GPIOE_MODER" 0xFFFFFFFF
+        Tag <0x40021004, 0x40021007> "UNMODELED_GPIOE_OTYPER" 0x00000008
+        Tag <0x50000010, 0x5000003f> "UNMODELED_USB_RESET" 0x80000000

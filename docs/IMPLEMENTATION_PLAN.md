@@ -1,6 +1,7 @@
 # AymOS Real-Time Systems Lab implementation plan
 
-Status: feasibility reviewed; PR 1 implementation authorized
+Status: PR 1 is merged. PR 2 is implemented at its committed head and has
+passed local acceptance tests, independent review, and hosted CI.
 
 This document defines the first trustworthy vertical slice of AymOS. It is a
 campaign plan, not a claim that the described target behavior exists today.
@@ -24,7 +25,7 @@ corrected to:
 - distinguish reset's address-zero vector fetch from subsequent VTOR-based
   exception dispatch, set VTOR in `SystemInit` before HAL/SysTick, and align the
   complete F401 vector table to its required boundary;
-- keep PR 2's SysTick/SVC smoke application-local (counter/flag handlers with
+- keep PR 2's SysTick/SVC smoke application-local (observed-flag handlers with
   thread-mode reporting), leaving SVC/PendSV/PSP task evidence to PR 3;
 - require exact-one banner validation from raw UART bytes with inner Robot and
   outer host timeouts; and
@@ -32,8 +33,8 @@ corrected to:
   drop-new overflow, an always-observable loss footer, and strict parser
   completeness checks.
 
-These findings are resolved in the plan. Their implementation evidence remains
-owned by the corresponding PR acceptance gates.
+These findings are resolved in the plan. PR 2 now has local implementation
+evidence; later findings remain owned by their corresponding acceptance gates.
 
 ## Product objective and evidence standard
 
@@ -242,17 +243,15 @@ The initial conservative choices are:
   `https://github.com/renode/renode/releases/download/v1.16.1/renode-1.16.1.linux-portable-dotnet.tar.gz`,
   SHA-256
   `00e113cdbd0f5354cf2f64bbe3f5a070d8958409542fca66e45ac97d982938c0`.
-  PR 2 still must verify that this asset executes on the supported clean host.
-  `renode-test` also requires Python packages; those requirements will be
-  installed with exact pins/hashes into the project's local virtual environment
-  rather than resolved from the user's Python environment.
+  PR 2 verifies that this asset executes on the supported host. `renode-test`
+  packages are installed with exact pins/hashes into the project's local
+  virtual environment rather than resolved from the user's Python environment.
 - Python is a project-local runtime, not a system prerequisite beyond setup.
-  PR 2 will pin a CPython 3.12 x86_64 Linux install-only archive from Astral's
-  `python-build-standalone` project by release, URL, and SHA-256 under
-  `.tools/python/`. Both `renode-test` and later host tools will use a virtual
-  environment created by that interpreter with exact, hash-locked
-  requirements. The final archive build and hash are a PR 2 lock-file review
-  item; `python3`, `venv`, and `pip` from `PATH` are not fallback behavior.
+  PR 2 pins CPython 3.12.13's x86_64 Linux install-only archive from Astral's
+  `python-build-standalone` 20260718 release by URL, size, and SHA-256. Both
+  `renode-test` and host validation use a virtual environment created by that
+  interpreter with exact, hash-locked requirements. `python3`, `venv`, and
+  `pip` from `PATH` are not fallback behavior.
 
 Official upstreams are the Arm GNU Toolchain release repository,
 <https://github.com/STMicroelectronics/STM32CubeF4>, its referenced component
@@ -318,13 +317,11 @@ smuggle lifecycle redesign into PR 1 merely to make the link green.
 
 ## Renode integration approach
 
-PR 2 will derive a repository-owned local definition from Renode's pinned
-generic `platforms/cpus/stm32f4.repl` and apply the smallest F401RE overlay
-needed by AymOS. The local copy removes the generic definition's unpinned
-remote `ApplySVD` fetch while preserving all peripheral tags required by
-Renode's STM32 models and tests. The overlay will override flash size to
-`0x80000`, SRAM size to `0x18000`, and SysTick frequency to 84 MHz. The reviewed
-model must map:
+PR 2 derives a repository-owned minimal definition from Renode's pinned generic
+STM32F4 model. It does not inherit the generic definition at runtime, because
+that file contains an unpinned remote `ApplySVD` fetch and many peripherals
+outside this slice. The local definition uses flash size `0x80000`, SRAM size
+`0x18000`, and SysTick frequency 84 MHz. It maps:
 
 - 512 KiB flash at `0x08000000`;
 - 96 KiB SRAM at `0x20000000`;
@@ -347,9 +344,9 @@ interactive/headless demonstration path. `make test-emulator` invokes a Robot
 test with a UART2 terminal tester timeout and wraps the entire Renode process in
 a second host-side timeout. It counts the exact banner bytes in the raw UART
 capture and requires exactly one `AYMOS READY`. After that banner, the guest
-invokes minimal application-local smoke handlers: SysTick increments a counter
-and SVC sets a flag; neither schedules, switches context, or writes UART. Thread
-mode observes the counter/flag and emits the smoke result. The test retains raw
+invokes minimal application-local smoke handlers: SysTick and SVC each set an
+observed flag; neither schedules, switches context, or writes UART. Thread mode
+observes both flags and emits the smoke result. The test retains raw
 UART separately from `emulator.log` on every failure.
 
 Reset occurs before firmware can write VTOR: the Cortex-M reset sequence must
@@ -585,14 +582,15 @@ Acceptance evidence:
 - `make run` loads the exact F401RE ELF and visibly reaches the banner.
 - `make test-emulator` exits successfully only after the raw UART capture
   contains exactly one stable banner and thread mode reports the post-banner
-  application-local SysTick-counter and SVC-flag smoke results. The Robot
+  application-local SysTick-flag and SVC-flag smoke results. The Robot
   terminal tester and outer host process each have an explicit timeout.
 - A missing banner, guest fault, or timeout produces nonzero status and retains
   command, Renode log, and raw UART output as separate artifacts.
 - At least ten clean repeated boots pass to expose startup races.
 - Metadata identifies Renode version, ELF hash, application, and arguments.
-- The model reuses generic `stm32f4.repl` with reviewed F401 sizing/frequency
-  overrides and documents that it is slice-accurate rather than exact silicon.
+- The local model is derived from generic `stm32f4.repl` with reviewed F401
+  sizing/frequency and documents that it is slice-accurate rather than exact
+  silicon; it does not inherit any remote runtime input.
 - The local model has no unpinned `ApplySVD` URL, retains required model tags,
   and runs with network disabled after setup.
 - Renode tests use the pinned project-local CPython and hash-locked virtual
@@ -605,6 +603,15 @@ Acceptance evidence:
   scheduler behavior is faked in host code.
 
 Gate: do not accept PR 3 integration until this boot is reliable.
+
+Local PR 2 evidence (2026-08-01): `make setup`, its offline integrity check,
+`make firmware`, `make test`, `make run`, `make test-emulator`, and
+`make test-emulator-offline` passed. Ten fresh Robot boots also passed with
+`RENODE_REPEAT=10 make test-emulator`. The raw capture was 42 bytes and
+contained the two required lines exactly once. Robot checked the address-zero
+flash alias, `0x20018000` initial MSP word, and `0x08000000` VTOR. Each actual
+emulator process was bounded by an outer TERM/KILL timeout. These local results
+do not substitute for independent review or the hosted CI run.
 
 ### PR 3: task lifecycle and context-switch correctness
 
@@ -839,12 +846,12 @@ only after its own acceptance evidence exists.
 
 | Risk or decision | Current position | Resolution gate |
 |---|---|---|
-| Renode F401RE model completeness | Reuse generic `stm32f4.repl` with `0x80000` flash, `0x18000` SRAM, and 84 MHz SysTick overrides. This is slice-accurate, not exact silicon; do not assume HAL RCC polling works. | Focused PR 2 boot experiment before kernel integration. |
-| Renode generic model fetches an unpinned SVD | Use a reviewed local derivative with remote `ApplySVD` removed and required tags preserved; emulator commands run offline after setup. | Static URL scan plus network-denied PR 2 boot/test. |
+| Renode F401RE model completeness | Resolved for the boot slice: local model uses `0x80000` flash, `0x18000` SRAM, 84 MHz SysTick, and only required peripherals. HAL boots with visible model warnings. This remains slice-accurate, not exact silicon. | Expand only when a later tested workload needs another peripheral. |
+| Renode generic model fetches an unpinned SVD | Resolved for PR 2: the local runtime model has no URLs; static scan and the actual Robot boot passed inside a network namespace after setup. | Keep URL scan and offline evidence in later emulator PRs. |
 | Reset versus VTOR | Reset still needs vectors at address zero before `SystemInit`; later exceptions use the `0x200`-aligned flash table through VTOR. | PR 1 ELF/VTOR checks and PR 2 boot-alias or explicit MSP/PC test. |
-| Exact Arm archive URL/hash | 14.3.rel1 x86_64 `arm-none-eabi` is selected provisionally. | Verify official SHA-256 and run clean setup in PR 1. |
-| CMSIS Core source | Use the Core headers compatible with CubeF4 v1.28.3, fetched minimally. | Compile/include audit and lock review in PR 1. |
-| Existing versus vendor startup | Only one F401xE vector table may link. Vendor startup is preferred unless review validates the local copy. | ELF/vector review in PR 1. |
+| Exact Arm archive URL/hash | Resolved in PR 1: official 14.3.rel1 x86_64 `arm-none-eabi` archive size/hash and consumed tool hashes are locked. | Reverify on any toolchain update. |
+| CMSIS Core source | Resolved in PR 1: compatible Core headers are fetched sparsely from the pinned CubeF4 v1.28.3 commit. | Reverify on a Cube/CMSIS update. |
+| Existing versus vendor startup | Resolved in PR 1: the pinned CMSIS-device F401xE startup is the only linked vector table. | Preserve the single-vector invariant. |
 | HAL versus register-level board setup | HAL is retained initially because the repository already uses it; only required modules are compiled. | PR 2 RCC/UART experiment. |
 | Kernel excluded from PR 1 boot link | Acceptable only if clearly reported and PR 3 links it; prefer inclusion after small compatibility fixes. | PR 1 feasibility review. |
 | Newlib heap | Dynamic newlib allocation is disabled initially so the custom heap is the sole dynamic allocator. | Map and `_sbrk` tests in PR 1; revisit only with demonstrated need. |

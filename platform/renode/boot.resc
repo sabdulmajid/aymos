@@ -1,0 +1,7 @@
+# Load the exact board-targeted ELF produced by `make firmware`.
+using sysbus
+$bin ?= @build/nucleo_f401re/boot/aymos.elf
+$platform ?= @platform/renode/nucleo_f401re.repl
+mach create "aymos-nucleo-f401re"
+machine LoadPlatformDescription $platform
+sysbus LoadELF $bin

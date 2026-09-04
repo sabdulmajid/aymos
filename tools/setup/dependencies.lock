@@ -26,3 +26,57 @@ STM32_HAL_URL="https://github.com/STMicroelectronics/stm32f4xx_hal_driver.git"
 STM32_HAL_COMMIT="b6f0ed3829f3829eb358a2e7417d80bba1a42db7"
 STM32_DEVICE_URL="https://github.com/STMicroelectronics/cmsis_device_f4.git"
 STM32_DEVICE_COMMIT="3c77349ce04c8af401454cc51f85ea9a50e34fc1"
+
+# Renode's portable .NET release includes its runtime and models.  Robot tests
+# use the separately locked Python environment below; no system Renode or
+# Python packages are accepted by the setup/check paths.
+RENODE_VERSION="1.16.1"
+RENODE_ARCHIVE="renode-1.16.1.linux-portable-dotnet.tar.gz"
+RENODE_URL="https://github.com/renode/renode/releases/download/v1.16.1/${RENODE_ARCHIVE}"
+RENODE_SHA256="00e113cdbd0f5354cf2f64bbe3f5a070d8958409542fca66e45ac97d982938c0"
+RENODE_SIZE="77304986"
+RENODE_ARCHIVE_DIRECTORY="renode_1.16.1-dotnet_portable"
+RENODE_DIRECTORY="renode-1.16.1-dotnet-x86_64"
+
+PYTHON_VERSION="3.12.13"
+PYTHON_RELEASE="20260718"
+PYTHON_ARCHIVE="cpython-3.12.13+20260718-x86_64-unknown-linux-gnu-install_only.tar.gz"
+PYTHON_URL="https://github.com/astral-sh/python-build-standalone/releases/download/${PYTHON_RELEASE}/cpython-3.12.13%2B20260718-x86_64-unknown-linux-gnu-install_only.tar.gz"
+PYTHON_SHA256="7eea0959fa425c8aff3ea0a1352ee7d01d794b51439ed8f5fcfa017dbc0ec661"
+PYTHON_SIZE="111280988"
+PYTHON_DIRECTORY="python-3.12.13-20260718-x86_64"
+PYTHON_VENV_DIRECTORY="python-venv-renode-1.16.1"
+
+# These wheels are the complete, transitive runtime set needed by
+# renode-test for AymOS's Robot/UART tests. Renode upstream names psutil 5.9.3;
+# AymOS intentionally substitutes locally tested 5.9.8 because 5.9.3 has no
+# CPython 3.12 wheel and would introduce an undeclared host compiler input.
+# This substitution is not claimed to satisfy an exact ==5.9.3 constraint.
+RENODE_PYTHON_WHEEL_NAMES=(
+    "robotframework-6.1-py3-none-any.whl"
+    "robotframework_retryfailed-0.2.0-py3-none-any.whl"
+    "psutil-5.9.8-cp36-abi3-manylinux_2_12_x86_64.manylinux2010_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
+    "pyyaml-6.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
+    "telnetlib3-2.0.8-py2.py3-none-any.whl"
+)
+RENODE_PYTHON_WHEEL_URLS=(
+    "https://files.pythonhosted.org/packages/11/ff/3105ff09e62c980e67a5b6974c8ac9577b4c3bacbc10a90e6b3e40cfcbd1/robotframework-6.1-py3-none-any.whl"
+    "https://files.pythonhosted.org/packages/24/80/144bca38aa894ec876f7943d3fd62fa57d9be937cc0be9e5d7e3df9837e3/robotframework_retryfailed-0.2.0-py3-none-any.whl"
+    "https://files.pythonhosted.org/packages/c5/4f/0e22aaa246f96d6ac87fe5ebb9c5a693fbe8877f537a1022527c47ca43c5/psutil-5.9.8-cp36-abi3-manylinux_2_12_x86_64.manylinux2010_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
+    "https://files.pythonhosted.org/packages/8b/9d/b3589d3877982d4f2329302ef98a8026e7f4443c765c46cfecc8858c6b4b/pyyaml-6.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
+    "https://files.pythonhosted.org/packages/bf/ba/3bc29b36aed7ed157d73ad8afb18b96c29199bfda53a418b828867e1fc70/telnetlib3-2.0.8-py2.py3-none-any.whl"
+)
+RENODE_PYTHON_WHEEL_SHA256S=(
+    "46b04648547eab6433ce107c4b40757aa8bea1e47bd86af9c0cff5546dac767e"
+    "b389dadb446a4d7356d7e953aabfdf2b0497d51df11d3da80abe9d4a8a0992c3"
+    "d06016f7f8625a1825ba3732081d77c94589dca78b7a3fc072194851e88461a4"
+    "ba1cc08a7ccde2d2ec775841541641e4548226580ab850948cbfda66a1befcdc"
+    "9c5b762d359581af61b7872c5abd1aa82d8fd49044d12b4eb5a7c88660901dbd"
+)
+RENODE_PYTHON_WHEEL_SIZES=(
+    "698535"
+    "8638"
+    "288191"
+    "807870"
+    "109725"
+)
