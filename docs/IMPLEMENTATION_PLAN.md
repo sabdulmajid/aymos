@@ -2,8 +2,8 @@
 
 Status: PRs 1 through 5 are merged. PR 6 is implemented on top of PR 5. Its
 formal adversarial findings are corrected, its final re-review is approved,
-and its focused and inherited regression gates pass. Committed-state evidence
-and hosted CI remain required before PR 6 is ready to merge.
+and its focused, inherited, and committed-state regression gates pass. Hosted
+CI remains required before PR 6 is ready to merge.
 
 This document defines the first trustworthy vertical slice of AymOS. It is a
 campaign plan, not a claim that the described target behavior exists today.
