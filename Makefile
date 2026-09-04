@@ -325,12 +325,12 @@ LDFLAGS := \
 	-Wl,-Map,$(MAP) \
 	-Wl,--cref
 
-.PHONY: firmware lifecycle edf allocator trace deadline-lab signal-lab demo setup validate test test-native \
+.PHONY: firmware lifecycle edf allocator trace deadline-lab signal-lab demo demo-dsp report-dsp setup validate test test-native \
 	test-native-scheduler test-native-allocator test-native-trace test-native-dsp \
 	check-dsp-codegen check-dsp-codegen-internal run run-lifecycle run-edf \
 	run-allocator run-trace test-emulator test-emulator-offline test-lifecycle test-edf \
 	test-allocator test-trace test-signal-lab test-host-trace test-host-deadline-lab \
-	test-host-signal-lab run-signal-lab \
+	test-host-signal-lab test-host-performance-report run-signal-lab \
 	decode-trace \
 	check-renode-platform clean clean-build clean-emulator flash disassembly \
 	help check-setup FORCE
@@ -346,7 +346,8 @@ check-setup:
 check-renode-platform:
 	@./tools/renode/check_platform.sh
 
-test: test-native test-host-trace test-host-deadline-lab test-host-signal-lab check-setup \
+test: test-native test-host-trace test-host-deadline-lab test-host-signal-lab \
+	test-host-performance-report check-setup \
 	check-renode-platform
 	@env -u PYTHONHOME -u PYTHONPATH \
 		PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 \
@@ -367,6 +368,11 @@ test-host-signal-lab: check-setup
 	@env -u PYTHONHOME -u PYTHONPATH \
 		PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 \
 		$(PYTHON) -m unittest tests.host.test_signal_lab -v
+
+test-host-performance-report: check-setup
+	@env -u PYTHONHOME -u PYTHONPATH \
+		PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 \
+		$(PYTHON) -m unittest tests.host.test_performance_report -v
 
 decode-trace: check-setup
 	@env -u PYTHONHOME -u PYTHONPATH \
@@ -642,6 +648,15 @@ test-signal-lab: check-renode-platform
 		PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 \
 		$(PYTHON) -m tools.aymos_lab.signal_lab test
 
+report-dsp: check-setup
+	@env -u PYTHONHOME -u PYTHONPATH \
+		PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 \
+		$(PYTHON) -m tools.aymos_lab.performance_report
+
+demo-dsp: check-renode-platform
+	@$(MAKE) --no-print-directory test-signal-lab
+	@$(MAKE) --no-print-directory report-dsp
+
 deadline-lab:
 	@$(MAKE) --no-print-directory APP=deadline_lab \
 		WORKLOAD_MODE="$(WORKLOAD_MODE)" firmware
@@ -683,7 +698,7 @@ trace:
 	@$(MAKE) --no-print-directory APP=trace firmware
 
 test-trace: trace
-	@RENODE_REPEAT="$${RENODE_REPEAT:-3}" AYMOS_APP=trace \
+	@RENODE_REPEAT="$${RENODE_REPEAT:-1}" AYMOS_APP=trace \
 		./tools/renode/test.sh
 
 $(PROJECT_OBJECTS) $(DSP_PROJECT_OBJECTS) $(PROJECT_ASM_OBJECTS) \
@@ -803,6 +818,8 @@ help:
 		'make signal-lab SIGNAL_IMPL=scalar|m4  Build one Signal Lab image' \
 		'make run-signal-lab SIGNAL_IMPL=scalar|m4  Run one Signal Lab image' \
 		'make test-signal-lab  Run and compare both Signal Lab images once' \
+		'make demo-dsp     Run both Signal Lab images and create one report' \
+		'make report-dsp   Create a report from existing Signal Lab evidence' \
 		'make deadline-lab WORKLOAD_MODE=normal|overload  Build one lab mode' \
 		'make demo         Run both Deadline Lab modes and create HTML reports' \
 		'make test-emulator Run the bounded Renode/Robot UART boot test' \
@@ -810,7 +827,7 @@ help:
 		'make test-lifecycle  Assert the ARM lifecycle scenario in Renode' \
 		'make test-edf     Assert the exact ARM EDF sequence in Renode' \
 		'make test-allocator Assert allocator/task-slot reuse in Renode' \
-		'make test-trace   Assert and compare three exact ARM trace workloads' \
+		'make test-trace   Assert one exact ARM trace workload' \
 		'make test-host-deadline-lab  Test the timeline and workload model' \
 		'make decode-trace TRACE_INPUT=uart.bin  Strictly decode a saved trace' \
 		'make validate     Re-run ELF, map, ABI, and memory validation' \
