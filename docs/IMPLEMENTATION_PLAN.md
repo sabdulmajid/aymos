@@ -1,8 +1,7 @@
 # AymOS Real-Time Systems Lab implementation plan
 
-Status: PR 1 is an unmerged draft whose committed head is the stacked baseline;
-PR 2 is implemented and locally acceptance-tested, with independent re-review
-and the hosted CI run pending
+Status: PR 1 is merged. PR 2 is implemented at its committed head and has
+passed local acceptance tests, independent review, and hosted CI.
 
 This document defines the first trustworthy vertical slice of AymOS. It is a
 campaign plan, not a claim that the described target behavior exists today.

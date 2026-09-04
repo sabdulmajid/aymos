@@ -39,7 +39,7 @@ The canonical target is the STM32F401RE on a NUCLEO-F401RE board:
   from thread mode.
 - Host UART-contract tests, a Robot boot test, network-isolated emulator
   evidence, retained failure artifacts, and a pinned CI workflow definition
-  whose hosted run remains pending.
+  whose hosted run passed on Ubuntu 24.04.
 
 ## Build
 
