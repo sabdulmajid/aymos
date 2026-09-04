@@ -2,8 +2,8 @@
 
 Status: PRs 1 through 6 are merged. PR 7 is implemented on top of PR 6. Its
 focused host checks and one real normal and overload run pass. Independent
-review is approved. Committed-state evidence and hosted CI remain publication
-gates.
+review is approved. Committed-state evidence passes. Hosted CI remains the
+publication gate.
 
 This document defines the first trustworthy vertical slice of AymOS. It is a
 campaign plan, not a claim that the described target behavior exists today.
