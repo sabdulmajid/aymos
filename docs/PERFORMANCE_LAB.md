@@ -1,9 +1,9 @@
 # Cortex-M4 performance lab
 
-The performance lab starts with one small DSP operation. It uses a Q15
-finite impulse response (FIR) filter. The implementation does not allocate
-memory. Native tests prove that the scalar and portable paired functions
-produce the same integer results. This change does not execute the M4 function.
+The performance lab uses one Q15 finite impulse response (FIR) filter. The
+implementation does not allocate memory. Native tests prove that the scalar
+and portable paired functions produce the same integer results. Signal Lab
+runs the scalar and M4 functions in separate NUCLEO-F401RE firmware images.
 
 ## Run the checks
 
@@ -37,6 +37,69 @@ VFP instructions and a `memcpy` reference in either checked function.
 This is static instruction evidence. It is not a hardware timing measurement.
 It does not prove execution time, interrupt latency, or a real-time limit.
 
+## Run Signal Lab
+
+Run both firmware configurations once:
+
+```sh
+make test-signal-lab
+```
+
+The command builds one scalar image and one M4 image. Each image uses the same
+SVC, PendSV, PSP, SysTick, and EDF kernel path. The workload has a sampler, a
+processor, a verifier, and the idle task.
+
+The sampler generates four frames. Each frame has 128 signed Q15 samples. It
+uses the fixed LFSR seed `0x1A2B3C4D`. The processor applies a 16-tap FIR and
+produces 113 valid outputs per frame. The verifier checks each firmware result.
+It also checks these aggregate CRC-32 values:
+
+- input: `0x0CAF72FD`;
+- output: `0xAFC277C1`.
+
+The tasks release at fixed ticks. The host validator requires the complete
+103-record trace, including every selection and candidate record. It rejects a
+different event order, deadline, task lifecycle, or selection reason.
+
+The run also records a synchronous, compressed Renode `PCAndOpcode` execution
+trace. The M4 image must enter `aymos_fir_q15_m4()` four times. It must execute
+3,616 `smlald` instructions and 452 `ssat` instructions at the exact opcode
+addresses from that ELF. The scalar image must enter only the scalar FIR and
+must not contain the M4 FIR symbol. The scalar source uses a portable
+single-lane loop. At `-O2`, Arm GCC selects `smlalbb` for its single-lane MAC.
+The test records exactly 7,232 executed `smlalbb` instructions. The M4 source
+explicitly packs two lanes for each `smlald`.
+
+The command writes deterministic evidence under:
+
+```text
+build/signal-lab/evidence/
+  summary.json
+  scalar/
+  m4/
+```
+
+Each implementation directory contains the exact ELF, map, build metadata,
+UART data, structured trace, result JSON, execution trace, emulator log, and
+command metadata. `summary.json` records the artifact hashes and compares the
+two firmware results. The collector snapshots each ELF, map, and build metadata
+file before execution. It binds the run to that ELF hash and rejects a live
+build artifact or Git commit change during the run. A lock prevents two
+evidence runs from replacing each other. A marked staging directory replaces
+the prior evidence only after both runs pass. The replacement first renames the
+old evidence to a marked backup on the same file system. A failed install
+restores that backup. A later run restores or removes a backup left by a sudden
+host stop.
+
+Build or run one configuration when you need a shorter iteration:
+
+```sh
+make signal-lab SIGNAL_IMPL=scalar
+make run-signal-lab SIGNAL_IMPL=m4
+```
+
+The complete comparison gate is `make test-signal-lab`.
+
 ## FIR contract
 
 Include `dsp/include/aymos_fir_q15.h`.
@@ -64,13 +127,16 @@ is not evidence of Cortex-M4 execution.
 
 ## Current limits
 
-This change does not add the FIR code to a firmware application. It does not
-change the kernel, scheduler, trace schema, or Deadline Lab. It provides a
-reviewable numerical base and checks the intended M4 instruction selection.
-The M4 result-equivalence gate belongs to the board-targeted firmware in the
-next change.
+Signal Lab changes no kernel policy and no trace schema. It uses deterministic
+work and checks functional results. The execution trace proves that the M4 DSP
+instructions ran in the board-targeted image. It does not prove hardware
+timing, interrupt latency, worst-case execution time, or a speedup.
 
-The next change will run the scalar and M4 filters in real board-targeted
-firmware with deterministic input and result checks. The third campaign change
-will generate a bounded scalar-versus-DSP comparison report and representative
-README artifacts. Physical-board cycle measurement stays in a later milestone.
+The scheduler trace reports one accounted RUNNING tick for each job. Each task
+uses `WFI` after it completes its work and waits for that tick boundary. The
+reported RUNNING interval therefore includes wait time. It is not CPU-active
+time and it is not a performance measurement.
+
+The next change will generate a small standalone scalar-versus-DSP comparison
+report and representative README artifacts. Physical-board cycle measurement
+stays in a later milestone.

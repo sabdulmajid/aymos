@@ -1052,17 +1052,72 @@ only the scalar and portable paired functions. PR 2 owns M4 result equivalence.
 
 ### Performance PR 2: board-targeted DSP workload
 
-Status: planned. It depends on Performance PR 1.
+Status: implemented; independent review approved. It depends on Performance PR
+1. The two-variant gate must run again from the committed head before
+publication.
 
-- Add a small deterministic signal-processing workload to the existing lab.
+- Add a three-task deterministic signal-processing workload to the existing
+  lab. Process four 128-sample frames with a 16-tap FIR.
 - Build separate scalar and Cortex-M4 DSP configurations from controlled source
-  lists.
-- Run the exact board-targeted firmware through the existing headless workflow.
-- Emit input identity, output checksum, work units, and selected implementation.
-- Prove numerical equality and show the work in a bounded report.
+  lists and compile the DSP translation units at `-O2`.
+- Run each exact board-targeted firmware image once through the existing SVC,
+  PendSV, PSP, SysTick, EDF, and schema-1 trace paths.
+- Emit the fixed seed, input and output CRC-32 values, work units, and selected
+  implementation after the structured trace.
+- Require the exact 103-record schedule and exact scalar/M4 firmware result
+  equality.
+- Record a bounded synchronous `PCAndOpcode` execution trace. Correlate exact
+  opcode bytes and addresses with each selected ELF. Require four selected FIR
+  calls and, for M4, 3,616 executed `smlald` and 452 executed `ssat`
+  instructions.
+- Retain the exact firmware, map, run metadata, traces, results, logs, commands,
+  and artifact hashes under `build/signal-lab/evidence/`.
 
-This pull request will not use a host scheduler or a host FIR result as a
-substitute for firmware execution. It must stop if the firmware results differ.
+Acceptance gate:
+
+```sh
+make test-host-signal-lab
+make test-signal-lab
+```
+
+This pull request does not use a host scheduler or a host FIR result as a
+substitute for firmware execution. It stops if the firmware results differ.
+The execution trace is functional evidence. It is not a cycle or speed
+measurement.
+
+A bounded capability check against pinned Renode 1.16.1 confirmed synchronous
+`PCAndOpcode` ReTrace version 4 output for `thumb cortex-m4`. Renode does not
+provide a reliable address-range filter for this path. The test therefore
+captures the short complete run, compresses it, and enforces 2 MiB compressed,
+12 MiB uncompressed, and 2,000,000-entry limits.
+
+The independent review found a SysTick lost-wake window between the execution
+count check and `WFI`. The task now holds PRIMASK across the check and DSB/WFI,
+then restores the caller mask and executes ISB. Review also found that the first
+oracle did not check all event payloads. One exact semantic projection now
+checks all 103 records, including creation state, deadline/job values, next
+release, switch cause/state, exit counters, and selection metadata.
+
+The review required stronger provenance and publication failure handling. The
+collector now snapshots the ELF, map, and build metadata before each run. It
+binds the run hash to that snapshot and rejects commit, configuration, ABI, or
+live build-artifact changes. Marked same-file-system backup/install/rollback
+logic protects the prior complete evidence. Controlled gzip, JSON, missing
+metadata, symlink, and timeout failures have focused tests.
+
+The review also clarified the instruction claim. Portable scalar C compiles to
+one single-lane `smlalbb` site and must execute it 7,232 times. The explicit M4
+paired loop must execute `smlald` 3,616 times and `ssat` 452 times. Neither is a
+timing claim. Finally, `DSP_FIRMWARE_CFLAGS` is an internal override, and a
+mutation test proves a command-line `-O0` cannot replace the effective
+Cortex-M4 soft-float `-O2` flags.
+
+After these changes, 17 focused host tests pass. Both scalar and M4 firmware
+images compile and pass ELF, vector, memory-map, and soft-float validation.
+`git diff --check`, Python syntax, and shell syntax checks pass. The independent
+review approved the frozen diff. The final `make test-signal-lab` run belongs
+to the committed-head publication step so its retained hashes identify the
+published source.
 
 ### Performance PR 3: comparison report and project presentation
 
