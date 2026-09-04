@@ -1,0 +1,28 @@
+# shellcheck shell=bash
+# Immutable dependency inputs for tools/setup.sh.
+
+ARM_GNU_VERSION="14.3.rel1"
+ARM_GNU_ARCHIVE="arm-gnu-toolchain-14.3.rel1-x86_64-arm-none-eabi.tar.xz"
+ARM_GNU_URL="https://developer.arm.com/-/media/Files/downloads/gnu/14.3.rel1/binrel/${ARM_GNU_ARCHIVE}"
+ARM_GNU_SHA256="8f6903f8ceb084d9227b9ef991490413014d991874a1e34074443c2a72b14dbd"
+ARM_GNU_SIZE="149789432"
+ARM_GNU_GCC_SHA256="510c55cfeed7328ade1eb8cb23808fcce1ba6c52dac8d4ebfe033ae4b2534385"
+ARM_GNU_AS_SHA256="500c3d460643e1961d1de6b5be98c50ceae574d85edce8e3c8c57cf8c35d2fd8"
+ARM_GNU_LD_SHA256="73b48c4930f7b9d9888fb400a46432486596b943d1415101245b735117d97732"
+ARM_GNU_NM_SHA256="d2f338ba59a101e1af6f934b97bffb1419742d610c5bd7c42a086cae4bee9f98"
+ARM_GNU_OBJCOPY_SHA256="0424b422a6c075238c2d4878630e9f111fd0f9320ac34e6f2cd617954042adda"
+ARM_GNU_OBJDUMP_SHA256="29829538419301ed3da5f3148a89e19ea9f9111105fa2ec3e05550f8998a5389"
+ARM_GNU_READELF_SHA256="f797d87877b1f48751803dec8eba9de6f761bcf7810b4868d7f7a3b68fd54cca"
+ARM_GNU_SIZE_SHA256="9aa1623c3874cab906b5cca55212b2f6abaec25fc2b1512e55cf9f1d8217f7cb"
+ARM_GNU_DIRECTORY="arm-gnu-toolchain-14.3.rel1-x86_64-arm-none-eabi"
+
+# These are the component revisions referenced by STM32CubeF4 v1.28.3,
+# peeled commit 94cae6e83f00e276a11957e7833c01ac3d0bd7af.
+STM32_CUBE_URL="https://github.com/STMicroelectronics/STM32CubeF4.git"
+STM32_CUBE_TAG="v1.28.3"
+STM32_CUBE_TAG_OBJECT="ff2098c3b8b1d8373edaa312f80a349f8e7309aa"
+STM32_CUBE_COMMIT="94cae6e83f00e276a11957e7833c01ac3d0bd7af"
+STM32_HAL_URL="https://github.com/STMicroelectronics/stm32f4xx_hal_driver.git"
+STM32_HAL_COMMIT="b6f0ed3829f3829eb358a2e7417d80bba1a42db7"
+STM32_DEVICE_URL="https://github.com/STMicroelectronics/cmsis_device_f4.git"
+STM32_DEVICE_COMMIT="3c77349ce04c8af401454cc51f85ea9a50e34fc1"
