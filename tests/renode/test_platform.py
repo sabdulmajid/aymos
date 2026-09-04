@@ -10,6 +10,7 @@ RUNTIME_INPUTS = (
     PLATFORM,
     REPOSITORY_ROOT / "platform" / "renode" / "boot.resc",
     REPOSITORY_ROOT / "tests" / "renode" / "boot.robot",
+    REPOSITORY_ROOT / "tests" / "renode" / "lifecycle.robot",
 )
 
 

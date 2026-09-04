@@ -2,49 +2,58 @@
 
 This document describes the public functions provided by AymOS. Each section lists the function prototype, its parameters, the return value and any notes about its usage.
 
-> **Experimental source inventory:** These APIs are present in the legacy
-> kernel/allocator source but are not linked into the current boot firmware. Their
-> lifecycle, timing, and memory contracts are not yet trustworthy. They become
-> supported only as later implementation-plan gates add architecture and native
-> tests.
+> **Status:** The snake-case task APIs below are linked and tested by
+> `APP=lifecycle`. Their scope is deliberately limited to the PR 3 lifecycle
+> contract. The allocator section remains an inventory of unlinked legacy code.
 
 ## Task Management
 
-### `void osKernelInit(void)`
-Initialise the kernel. Must be called before any other OS function. Returns nothing.
+### `int os_kernel_init(void)`
+Initialize the task table, fixed stack slots, idle task, stack-alignment control,
+and system-exception priorities. Returns `1` on success and `0` if already
+initialized or running.
 
-### `int osCreateTask(TCB* task)`
-Create a task with default deadline. The `task` structure must contain a pointer to the task function, stack size and initial priority. Returns `RTX_OK` on success or `RTX_ERR` on failure.
+### `int os_task_create(const os_task_config_t *config, os_task_id_t *created_id)`
+Create a task before kernel start. The entry, argument, eight-byte-multiple stack
+size, nonzero `deadline_ticks`, and priority are explicit. PR 3 accepts stack
+sizes from 256 through 1024 bytes and assigns one fixed slot per task. Returns
+`1` on success and `0` for invalid input or no slot. Runtime creation is not yet
+supported.
 
-### `int osCreateDeadlineTask(int deadline, TCB* task)`
-Create a task with an explicit deadline in milliseconds. The deadline sets the period for periodic tasks. Returns `RTX_OK` on success or `RTX_ERR` on error.
+### `void os_kernel_start(void)`
+Start scheduling through SVC and PendSV and enter privileged thread mode on PSP.
+This function does not return; an invalid start produces a UART panic.
 
-### `int osKernelStart(void)`
-Start executing tasks. This switches the processor to the first ready task. Returns `RTX_OK` if the kernel started correctly.
+### `void os_yield(void)`
+Voluntarily offer the processor to another ready task through SVC. If no other
+user task is ready, the calling task resumes.
 
-### `void osYield(void)`
-Yield the processor voluntarily. The scheduler selects the next ready task according to the deadline scheduler.
+### `int os_sleep(uint32_t ticks)`
+Put the calling task to sleep for an interval from 1 through `INT32_MAX` ticks.
+Returns `0` without issuing SVC for zero or a value outside that half-range;
+returns `1` after a valid sleep completes. Within this deliberately bounded PR
+3 contract, SysTick uses signed-delta comparison safely across counter wrap and
+a newly awakened task can request PendSV preemption. PR 4 owns the final timing
+model and its full boundary test matrix.
 
-### `void osSleep(int timeInMs)`
-Suspend the calling task for the given amount of time. The task automatically becomes ready again after the interval expires.
+### `os_task_id_t os_current_task(void)`
+Return the current task identifier, or `OS_TASK_ID_INVALID` before dispatch.
 
-### `void osPeriodYield(void)`
-Yield until the next period of the task, calculated from its deadline.
+### `int os_task_info(os_task_id_t id, os_task_info_t *info)`
+Copy the task's ID, lifecycle state, current deadline field, and priority under a
+short interrupt critical section. Returns `1` on success and `0` for invalid or
+dormant tasks.
 
-### `int osSetDeadline(int deadline, task_t TID)`
-Update the deadline of an existing task. Returns `RTX_OK` on success.
+### `void os_task_exit(void)`
+Terminate the calling user task through SVC. The task-entry trampoline invokes
+this automatically when an entry function returns. It never returns to the old
+PSP; PendSV reclaims the stack slot while executing on MSP.
 
-### `int osSetPriority(uint8_t priority, task_t TID)`
-Change the priority of a task. Lower numeric values represent higher priority. Returns `RTX_OK` on success.
+### Lifecycle inspection helpers
 
-### `task_t osGetTID(void)`
-Return the identifier of the currently running task. Returns `TID_NULL` if the kernel is not running.
-
-### `int osTaskInfo(task_t TID, TCB* task_copy)`
-Fill `task_copy` with information about a task. Returns `RTX_OK` if successful.
-
-### `int osTaskExit(void)`
-Terminate the calling task and release its resources.
+`os_tick_count`, `os_last_reclaimed_task`, `os_reclaim_count`, and
+`os_thread_uses_psp` provide bounded diagnostic evidence for the lifecycle
+workload. They are not the structured tracing API planned for PR 6.
 
 ## Memory Management
 

@@ -7,7 +7,7 @@ BOARD ?= nucleo_f401re
 APP ?= boot
 
 SUPPORTED_BOARDS := nucleo_f401re
-SUPPORTED_APPS := boot
+SUPPORTED_APPS := boot lifecycle
 
 ifeq ($(filter $(BOARD),$(SUPPORTED_BOARDS)),)
 $(error Unsupported BOARD '$(BOARD)'; supported boards: $(SUPPORTED_BOARDS))
@@ -66,11 +66,26 @@ SIZE_REPORT := $(BUILD_DIR)/size.txt
 BUILD_METADATA := $(BUILD_DIR)/build-metadata.txt
 LINKER_SCRIPT := bsp/nucleo_f401re/stm32f401re.ld
 
+COMMON_PROJECT_C_SOURCES := \
+	bsp/nucleo_f401re/src/board.c \
+	bsp/nucleo_f401re/src/newlib_heap.c
+
+ifeq ($(APP),boot)
 PROJECT_C_SOURCES := \
 	apps/boot/main.c \
-	bsp/nucleo_f401re/src/board.c \
 	bsp/nucleo_f401re/src/interrupts.c \
-	bsp/nucleo_f401re/src/newlib_heap.c
+	$(COMMON_PROJECT_C_SOURCES)
+PROJECT_ASM_SOURCES :=
+else ifeq ($(APP),lifecycle)
+PROJECT_C_SOURCES := \
+	apps/lifecycle/main.c \
+	bsp/nucleo_f401re/src/kernel_interrupts.c \
+	kernel/src/kernel.c \
+	$(COMMON_PROJECT_C_SOURCES)
+PROJECT_ASM_SOURCES := \
+	arch/arm_cm4/context_switch.S \
+	apps/lifecycle/register_probe.S
+endif
 
 VENDOR_C_SOURCES := \
 	$(CMSIS_DEVICE_DIR)/Source/Templates/system_stm32f4xx.c \
@@ -85,9 +100,11 @@ VENDOR_ASM_SOURCES := \
 	$(CMSIS_DEVICE_DIR)/Source/Templates/gcc/startup_stm32f401xe.s
 
 PROJECT_OBJECTS := $(addprefix $(OBJ_DIR)/,$(PROJECT_C_SOURCES:.c=.o))
+PROJECT_ASM_OBJECTS := $(addprefix $(OBJ_DIR)/,$(PROJECT_ASM_SOURCES:.S=.o))
 VENDOR_C_OBJECTS := $(addprefix $(OBJ_DIR)/,$(VENDOR_C_SOURCES:.c=.o))
 VENDOR_ASM_OBJECTS := $(addprefix $(OBJ_DIR)/,$(VENDOR_ASM_SOURCES:.s=.o))
-OBJECTS := $(VENDOR_ASM_OBJECTS) $(PROJECT_OBJECTS) $(VENDOR_C_OBJECTS)
+OBJECTS := $(VENDOR_ASM_OBJECTS) $(PROJECT_OBJECTS) $(PROJECT_ASM_OBJECTS) \
+	$(VENDOR_C_OBJECTS)
 DEPENDENCY_FILES := $(OBJECTS:.o=.d)
 
 ARCH_FLAGS := -mcpu=cortex-m4 -mthumb -mfloat-abi=soft
@@ -96,6 +113,7 @@ COMMON_CPPFLAGS := \
 	-DUSE_HAL_DRIVER \
 	-DUSER_VECT_TAB_ADDRESS \
 	-Ibsp/nucleo_f401re/include \
+	-Ikernel/include \
 	-isystem $(CMSIS_CORE_DIR) \
 	-isystem $(CMSIS_DEVICE_DIR)/Include \
 	-isystem $(HAL_DIR)/Inc \
@@ -135,7 +153,8 @@ LDFLAGS := \
 	-Wl,-Map,$(MAP) \
 	-Wl,--cref
 
-.PHONY: firmware setup validate test run test-emulator test-emulator-offline \
+.PHONY: firmware lifecycle setup validate test run run-lifecycle \
+	test-emulator test-emulator-offline test-lifecycle \
 	check-renode-platform clean clean-build clean-emulator flash disassembly \
 	help check-setup FORCE
 
@@ -156,15 +175,25 @@ test: check-setup check-renode-platform
 		$(PYTHON) -m unittest discover -s tests/renode -p 'test_*.py' -v
 
 run: firmware check-renode-platform
-	@./tools/renode/run.sh
+	@AYMOS_APP="$(APP)" ./tools/renode/run.sh
+
+run-lifecycle:
+	@$(MAKE) --no-print-directory APP=lifecycle run
 
 test-emulator: firmware check-renode-platform
-	@./tools/renode/test.sh
+	@AYMOS_APP="$(APP)" ./tools/renode/test.sh
 
 test-emulator-offline: firmware check-renode-platform
-	@./tools/renode/test.sh --offline
+	@AYMOS_APP="$(APP)" ./tools/renode/test.sh --offline
 
-$(PROJECT_OBJECTS) $(VENDOR_C_OBJECTS) $(VENDOR_ASM_OBJECTS): | check-setup
+lifecycle:
+	@$(MAKE) --no-print-directory APP=lifecycle firmware
+
+test-lifecycle:
+	@$(MAKE) --no-print-directory APP=lifecycle test-emulator
+
+$(PROJECT_OBJECTS) $(PROJECT_ASM_OBJECTS) $(VENDOR_C_OBJECTS) \
+	$(VENDOR_ASM_OBJECTS): | check-setup
 
 $(PROJECT_OBJECTS): $(OBJ_DIR)/%.o: %.c
 	@mkdir -p "$(dir $@)"
@@ -181,6 +210,12 @@ $(VENDOR_C_OBJECTS): $(OBJ_DIR)/%.o: %.c
 $(VENDOR_ASM_OBJECTS): $(OBJ_DIR)/%.o: %.s
 	@mkdir -p "$(dir $@)"
 	@printf 'AS(vendor)  %s\n' "$<"
+	@$(CC) $(COMMON_CPPFLAGS) $(ARCH_FLAGS) -x assembler-with-cpp \
+		-MMD -MP -c "$<" -o "$@"
+
+$(PROJECT_ASM_OBJECTS): $(OBJ_DIR)/%.o: %.S
+	@mkdir -p "$(dir $@)"
+	@printf 'AS(project) %s\n' "$<"
 	@$(CC) $(COMMON_CPPFLAGS) $(ARCH_FLAGS) -x assembler-with-cpp \
 		-MMD -MP -c "$<" -o "$@"
 
@@ -247,13 +282,15 @@ help:
 		'make firmware     Build and validate the F401RE boot firmware (default)' \
 		'make test         Run host tests for the Renode model and UART validator' \
 		'make run          Boot the exact F401RE ELF headlessly and print UART' \
+		'make run-lifecycle  Build/run the SVC/PendSV/PSP lifecycle scenario' \
 		'make test-emulator Run the bounded Renode/Robot UART boot test' \
 		'make test-emulator-offline  Repeat the test in a network namespace' \
+		'make test-lifecycle  Assert the ARM lifecycle scenario in Renode' \
 		'make validate     Re-run ELF, map, ABI, and memory validation' \
 		'make disassembly  Generate an annotated disassembly' \
 		'make clean        Remove firmware and emulator build artifacts' \
 		'make flash        Build, then stop with the unvalidated hardware notice' \
 		'' \
-		'Selection: BOARD=nucleo_f401re APP=boot (the only current choices)'
+		'Selection: BOARD=nucleo_f401re APP=boot|lifecycle'
 
 -include $(DEPENDENCY_FILES)

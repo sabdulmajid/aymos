@@ -14,6 +14,7 @@ static UART_HandleTypeDef uart2;
 static HAL_StatusTypeDef configure_clock(void);
 static HAL_StatusTypeDef configure_gpio(void);
 static HAL_StatusTypeDef configure_uart(void);
+static void panic_uart_write(const char *data, size_t length);
 
 HAL_StatusTypeDef board_init(void)
 {
@@ -60,6 +61,53 @@ void board_panic(void)
     __disable_irq();
     for (;;) {
         __NOP();
+    }
+}
+
+void board_kernel_panic(const char *reason)
+{
+    static const char prefix[] = "AYMOS PANIC ";
+    static const char newline[] = "\r\n";
+
+    __disable_irq();
+    panic_uart_write(prefix, sizeof(prefix) - 1U);
+    if (reason != NULL) {
+        size_t length = 0U;
+        while (reason[length] != '\0') {
+            ++length;
+        }
+        panic_uart_write(reason, length);
+    }
+    panic_uart_write(newline, sizeof(newline) - 1U);
+    for (;;) {
+        __NOP();
+    }
+}
+
+__attribute__((weak)) void board_lifecycle_idle_hook(void)
+{
+}
+
+static void panic_uart_write(const char *data, size_t length)
+{
+    enum { PANIC_UART_SPIN_LIMIT = 1000000U };
+
+    if ((__HAL_RCC_USART2_IS_CLK_ENABLED() == 0U) || data == NULL) {
+        return;
+    }
+    for (size_t index = 0U; index < length; ++index) {
+        uint32_t remaining = PANIC_UART_SPIN_LIMIT;
+        while ((USART2->SR & USART_SR_TXE) == 0U && remaining > 0U) {
+            --remaining;
+        }
+        if (remaining == 0U) {
+            return;
+        }
+        USART2->DR = (uint8_t)data[index];
+    }
+    uint32_t remaining = PANIC_UART_SPIN_LIMIT;
+    while ((USART2->SR & USART_SR_TC) == 0U && remaining > 0U) {
+        --remaining;
     }
 }
 

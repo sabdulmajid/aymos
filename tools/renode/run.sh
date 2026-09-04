@@ -7,11 +7,27 @@ readonly script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly repo_root="$(cd -- "${script_dir}/../.." && pwd)"
 readonly renode="${repo_root}/.tools/renode-1.16.1-dotnet-x86_64/renode"
 readonly python="${repo_root}/.tools/python-venv-renode-1.16.1/bin/python3"
-readonly elf="${repo_root}/build/nucleo_f401re/boot/aymos.elf"
+readonly app="${AYMOS_APP:-boot}"
+case "${app}" in
+    boot)
+        uart_validator="${script_dir}/verify_uart.py"
+        default_virtual_duration="0.2"
+        ;;
+    lifecycle)
+        uart_validator="${script_dir}/verify_lifecycle_uart.py"
+        default_virtual_duration="0.5"
+        ;;
+    *)
+        printf 'renode-run: unsupported AYMOS_APP: %s\n' "${app}" >&2
+        exit 2
+        ;;
+esac
+readonly uart_validator default_virtual_duration
+readonly elf="${repo_root}/build/nucleo_f401re/${app}/aymos.elf"
 readonly boot_script="${repo_root}/platform/renode/boot.resc"
 readonly platform="${repo_root}/platform/renode/nucleo_f401re.repl"
 readonly host_timeout="${AYMOS_RENODE_HOST_TIMEOUT:-30}"
-readonly virtual_duration="${AYMOS_RENODE_VIRTUAL_DURATION:-0.2}"
+readonly virtual_duration="${AYMOS_RENODE_VIRTUAL_DURATION:-${default_virtual_duration}}"
 readonly run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 readonly output_dir="${AYMOS_RENODE_OUTPUT_DIR:-${repo_root}/build/renode/run/${run_id}}"
 readonly uart_capture="${output_dir}/uart.bin"
@@ -29,7 +45,8 @@ validate_inputs() {
             "${virtual_duration}" >&2
         exit 2
     }
-    for required in "${renode}" "${python}" "${elf}" "${boot_script}" "${platform}"; do
+    for required in "${renode}" "${python}" "${elf}" "${boot_script}" \
+        "${platform}" "${uart_validator}"; do
         [[ -f "${required}" ]] || {
             printf 'renode-run: missing required input: %s\n' "${required}" >&2
             exit 2
@@ -84,7 +101,7 @@ renode_build="$(printf '%s' "${renode_build}" | tr '\n' ' ' | sed 's/[[:space:]]
 {
     printf 'schema=1\n'
     printf 'board=nucleo_f401re\n'
-    printf 'app=boot\n'
+    printf 'app=%s\n' "${app}"
     printf 'git_commit=%s\n' "$(git -C "${repo_root}" rev-parse HEAD)"
     printf 'repository_clean=%s\n' \
         "$(test -z "$(git -C "${repo_root}" status --porcelain)" && printf true || printf false)"
@@ -124,7 +141,7 @@ fi
 set +e
 env -u PYTHONHOME -u PYTHONPATH \
     PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 \
-    "${python}" "${script_dir}/verify_uart.py" "${uart_capture}" \
+    "${python}" "${uart_validator}" "${uart_capture}" \
     > "${output_dir}/uart.txt" 2> "${output_dir}/uart-validation.log"
 status=$?
 set -e

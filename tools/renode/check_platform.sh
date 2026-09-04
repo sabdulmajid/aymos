@@ -12,6 +12,7 @@ readonly runtime_inputs=(
     platform/renode/nucleo_f401re.repl
     platform/renode/boot.resc
     tests/renode/boot.robot
+    tests/renode/lifecycle.robot
 )
 
 for runtime_input in "${runtime_inputs[@]}"; do

@@ -1,10 +1,11 @@
 # AymOS Real-Time Systems Lab
 
 AymOS is becoming a small, inspectable Cortex-M4 real-time systems lab. The
-current verified slice builds a board-targeted boot image reproducibly and
-boots that exact ELF headlessly in pinned Renode. The EDF kernel source is
-retained for the next architecture/lifecycle PR, but is not linked into the
-boot application and is not yet claimed to execute safely.
+current verified slice builds board-targeted images reproducibly, boots the
+exact ELF headlessly in pinned Renode, and runs a deterministic Cortex-M4 task
+lifecycle through SVC, PendSV, PSP, and SysTick. EDF timing semantics and the
+educational allocator remain later gates; this slice does not claim that they
+are complete.
 
 The canonical target is the STM32F401RE on a NUCLEO-F401RE board:
 
@@ -38,8 +39,17 @@ The canonical target is the STM32F401RE on a NUCLEO-F401RE board:
   application-local SysTick and SVC smoke handler, and emits the smoke result
   from thread mode.
 - Host UART-contract tests, a Robot boot test, network-isolated emulator
-  evidence, retained failure artifacts, and a pinned CI workflow definition
-  whose hosted run passed on Ubuntu 24.04.
+  evidence, retained failure artifacts, and a pinned CI workflow. The PR 2
+  hosted workflow passed on Ubuntu 24.04.
+- A real, soft-float Cortex-M4 kernel path with validated SVC decoding, a small
+  PendSV R4-R11 save/restore routine, privileged thread mode on PSP, and
+  explicit SVC/SysTick/PendSV priority ordering.
+- Eight-byte-aligned fixed task-stack slots, an initial hardware/software
+  exception frame with the task argument in R0, a task-entry trampoline, and
+  handler-mode stack reclamation after task return.
+- An exact lifecycle oracle that proves first dispatch, two voluntary yields,
+  SysTick-driven preemption, R4-R11 preservation, two safe exits/reclaims, and
+  continued idle execution in the ARM firmware.
 
 ## Build
 
@@ -57,6 +67,7 @@ make firmware
 make test
 make run
 make test-emulator
+make test-lifecycle
 ```
 
 `make setup` downloads locked Arm, Renode, CPython, Python-wheel, and STM32
@@ -68,10 +79,11 @@ Every build first runs `tools/setup.sh --check`, an offline/read-only integrity
 gate. Compilation cannot start until all consumed tool hashes, dependency
 commits, clean states, files, and licenses pass.
 
-The only current selection is explicit:
+Application selection is explicit:
 
 ```sh
 make firmware BOARD=nucleo_f401re APP=boot
+make firmware BOARD=nucleo_f401re APP=lifecycle
 ```
 
 Unknown board/application names fail instead of silently changing the image.
@@ -102,6 +114,8 @@ make validate
 make disassembly
 make test-emulator-offline
 RENODE_REPEAT=10 make test-emulator
+make run-lifecycle
+RENODE_REPEAT=10 make test-lifecycle
 make clean
 make help
 ```
@@ -117,19 +131,18 @@ hardware notice. It does not guess which probe/programmer the user has.
 
 ## Implemented but experimental
 
-The legacy source tree contains:
+The lifecycle kernel is intentionally narrow. Tasks must be created before
+kernel start, each receives one fixed stack slot, and the current
+`deadline_ticks` plus priority fields provide only the deterministic selection
+needed by the lifecycle scenario. Periods, absolute deadlines, miss accounting,
+and reusable task timing configuration are PR 4 work. PR 3 sleep is explicitly
+bounded to 1 through `INT32_MAX` ticks so its signed-delta wake comparison is
+safe across a single counter wrap; the final wraparound test matrix is PR 4.
 
-- a 16-slot task table with an EDF-like scan and priority tie breaker;
-- Cortex-M SVC/PendSV assembly intended to save and restore R4-R11 on PSP; and
-- a linked-list allocator with splitting, task-owner metadata, and coalescing.
-
-These components are educational prototypes. They currently have known task
-state, frame, timing-model, interrupt, alignment, and allocator issues recorded
-in [the implementation plan](docs/IMPLEMENTATION_PLAN.md). Allocator ownership
-metadata is not hardware memory protection or task isolation.
-
-The API inventory in [docs/API_REFERENCE.md](docs/API_REFERENCE.md) describes
-the legacy source surface, not a verified runtime contract.
+The unlinked allocator in `src/memory.c` is still an educational prototype with
+known alignment, metadata, interleaving, ownership, and validation issues. It
+is not used for the PR 3 task stacks. Allocator ownership metadata is not
+hardware memory protection or task isolation.
 
 ## Planned campaign
 
@@ -137,7 +150,8 @@ The reviewed sequence is:
 
 1. reproducible F401RE build (implemented and tested);
 2. Renode boot harness and emulator tests (implemented and tested locally);
-3. task lifecycle and Cortex-M context-switch correctness;
+3. task lifecycle and Cortex-M context-switch correctness (implemented and
+   tested on this branch);
 4. explicit timing semantics and deterministic EDF tests;
 5. allocator hardening;
 6. bounded structured kernel tracing; and
