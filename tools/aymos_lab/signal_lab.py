@@ -1,4 +1,4 @@
-"""Validate and run the deterministic board-targeted AymOS Signal Lab."""
+"""Validate and run the deterministic board-targeted AymOS DSP workload."""
 
 from __future__ import annotations
 
@@ -167,19 +167,19 @@ EXPECTED_RECORD_COUNT = len(EXPECTED_SEMANTIC_PROJECTION)
 
 
 class SignalLabError(TraceError):
-    """Signal Lab evidence does not satisfy its deterministic contract."""
+    """DSP evidence does not satisfy its deterministic contract."""
 
 
 def _expect(actual: Any, expected: Any, label: str) -> None:
     if actual != expected:
         raise SignalLabError(
-            f"Signal Lab {label} mismatch: got {actual!r}, expected {expected!r}"
+            f"DSP workload {label} mismatch: got {actual!r}, expected {expected!r}"
         )
 
 
 def parse_result(suffix: bytes, implementation: str) -> dict[str, Any]:
     if implementation not in IMPLEMENTATIONS:
-        raise SignalLabError(f"unsupported Signal Lab implementation: {implementation}")
+        raise SignalLabError(f"unsupported DSP implementation: {implementation}")
     match = RESULT_PATTERN.fullmatch(suffix)
     if match is None:
         raise SignalLabError("result suffix does not match the exact ASCII contract")
@@ -541,7 +541,7 @@ def _expect_metadata(
 ) -> None:
     for key, value in expected.items():
         if key not in actual:
-            raise SignalLabError(f"Signal Lab {label} is missing {key}")
+            raise SignalLabError(f"DSP workload {label} is missing {key}")
         _expect(actual[key], value, f"{label} {key}")
 
 
@@ -576,7 +576,7 @@ def signal_environment(
     implementation: str, output_dir: Path, firmware_elf: Path | None = None,
 ) -> dict[str, str]:
     if implementation not in IMPLEMENTATIONS:
-        raise SignalLabError(f"unsupported Signal Lab implementation: {implementation}")
+        raise SignalLabError(f"unsupported DSP implementation: {implementation}")
     environment = dict(os.environ)
     environment.update({
         "AYMOS_APP": "signal_lab",
@@ -871,7 +871,7 @@ def run_test() -> Path:
     try:
         lock.mkdir()
     except FileExistsError as error:
-        raise SignalLabError("another Signal Lab evidence run is active") from error
+        raise SignalLabError("another DSP evidence run is active") from error
     stage = base / f".evidence-stage-{os.getpid()}"
     try:
         _recover_evidence_backup(EVIDENCE_ROOT)
@@ -917,7 +917,7 @@ def run_test() -> Path:
         raise
     finally:
         lock.rmdir()
-    print(f"AYMOS SIGNAL LAB PASS artifacts={EVIDENCE_ROOT}")
+    print(f"AYMOS DSP PASS artifacts={EVIDENCE_ROOT}")
     return EVIDENCE_ROOT
 
 
@@ -934,7 +934,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "test":
             run_test()
     except (OSError, SignalLabError, subprocess.SubprocessError) as error:
-        print(f"signal-lab: {error}", file=sys.stderr)
+        print(f"dsp: {error}", file=sys.stderr)
         return 1
     return 0
 

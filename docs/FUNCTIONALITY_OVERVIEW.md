@@ -104,13 +104,13 @@ structured-trace tests. The
 obsolete `k_mem` implementation and its three manual allocator programs were
 retired in PR 5 so the repository does not present two allocator contracts.
 
-## Deadline Lab
+## Scheduling demonstration
 
 `APP=deadline_lab` runs sampler, controller, telemetry, and load tasks through
 the same Cortex-M4 kernel. Its normal build meets all eight job deadlines. Its
 overload build changes only the load demand and records the first miss at tick
 12. `make demo` validates both traces and creates standalone HTML timelines
-with run metadata. See [DEADLINE_LAB.md](DEADLINE_LAB.md).
+with run metadata. See [SCHEDULING_DEMO.md](SCHEDULING_DEMO.md).
 
 ## Next Steps
 

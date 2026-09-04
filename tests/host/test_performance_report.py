@@ -235,7 +235,7 @@ class PerformanceReportTests(unittest.TestCase):
         self.uart_recheck.stop()
         self.execution_recheck.stop()
 
-    def test_valid_evidence_builds_complete_model_and_visuals(self):
+    def test_valid_evidence_builds_complete_model_and_report(self):
         with tempfile.TemporaryDirectory() as temporary:
             evidence_root = Path(temporary) / "evidence"
             create_evidence(evidence_root)
@@ -247,11 +247,11 @@ class PerformanceReportTests(unittest.TestCase):
                 model["instruction_evidence"]["m4"]["packed_smlald"], 3616
             )
             self.assertEqual(len(model["schedule"]["intervals"]), 15)
-            svg = performance_report.render_svg(model)
-            self.assertIn("60,252 total FIR-body", svg)
-            self.assertIn('x="1020.0" y="21"', svg)
-            self.assertIn('font-size="10">23</text>', svg)
-            self.assertIn("not CPU-active time", performance_report.render_html(model))
+            report = performance_report.render_html(model)
+            self.assertIn("60,252 total FIR-body", report)
+            self.assertIn('x="1020.0" y="21"', report)
+            self.assertIn('font-size="10">23</text>', report)
+            self.assertIn("not CPU-active time", report)
 
     def test_hash_and_size_mutations_fail_closed(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -366,7 +366,7 @@ class PerformanceReportTests(unittest.TestCase):
             "uart.bin": b"prefix" + performance_report.trace_tool.TRAILER,
             "trace.bin": b"records",
             "uart.txt": (
-                b"AYMOS SIGNAL LAB PASS IMPL=scalar RECORDS=103 "
+                b"AYMOS DSP PASS IMPL=scalar RECORDS=103 "
                 b"OUTPUT_CRC=0xAFC277C1\n"
             ),
             "uart-validation.log": b"",

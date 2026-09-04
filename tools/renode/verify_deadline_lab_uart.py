@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate one completed AymOS Deadline Lab UART stream."""
+"""Validate one completed AymOS scheduling workload UART stream."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ def main(argv: list[str]) -> int:
         return 2
     mode = os.environ.get("AYMOS_WORKLOAD_MODE", "")
     if mode not in ("normal", "overload"):
-        print(f"deadline-lab-uart: invalid AYMOS_WORKLOAD_MODE: {mode!r}",
+        print(f"scheduling-uart: invalid AYMOS_WORKLOAD_MODE: {mode!r}",
               file=sys.stderr)
         return 2
     capture = Path(argv[1])
@@ -32,9 +32,9 @@ def main(argv: list[str]) -> int:
             json.dumps(decoded, sort_keys=True, indent=2) + "\n",
             encoding="utf-8")
     except (OSError, DeadlineLabError) as error:
-        print(f"deadline-lab-uart: {error}", file=sys.stderr)
+        print(f"scheduling-uart: {error}", file=sys.stderr)
         return 1
-    print(f"AYMOS DEADLINE LAB PASS MODE={mode} "
+    print(f"AYMOS SCHEDULING PASS MODE={mode} "
           f"RECORDS={decoded['record_count']}")
     return 0
 

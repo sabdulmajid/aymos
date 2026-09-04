@@ -1,270 +1,167 @@
 # AymOS
 
-AymOS is a small Cortex-M4 real-time systems lab. It targets the
-NUCLEO-F401RE board. It runs deterministic workloads in the Renode emulator.
-It records kernel events for inspection on a Linux host.
+AymOS is a compact real-time operating system for the ARM Cortex-M4. It
+targets the STM32F401RE microcontroller on the NUCLEO-F401RE board.
 
-AymOS uses Earliest Deadline First (EDF) scheduling. EDF selects the ready
-task with the earliest absolute deadline. A fixed priority resolves an equal
-deadline.
+AymOS runs tasks that have release times and deadlines. Its scheduler selects
+the ready task with the earliest deadline. The firmware records each important
+kernel event, so a developer can see which task ran, when it ran, and why the
+kernel selected it.
 
-The Signal Lab uses digital signal processing (DSP). DSP applies numeric
-operations to sampled data. The lab uses Q15 values. Q15 stores a signed
-fraction in a 16-bit integer.
+A task is a C function with its own stack and execution state. The operating
+system decides which task can use the processor. An absolute deadline is the
+tick when one released job must be complete.
 
-![AymOS Signal Lab result](docs/assets/signal-lab.svg)
+## The problem
 
-The image shows functional instruction evidence from one validated run. It
-does not show speed, cycles, latency, worst-case execution time (WCET), or
-physical performance. See the [machine-readable result](docs/assets/signal-lab.json).
+An embedded controller often has to sample inputs, calculate a result, and
+send status data on one processor. Each operation must finish at the correct
+time. A late operation can make the full system incorrect, even when every
+calculation gives the correct value.
+
+These failures are difficult to inspect. Task switches occur inside processor
+exception handlers, and normal log messages do not show enough scheduler
+state. AymOS makes this execution path visible and repeatable.
+
+## The solution
+
+AymOS combines a small Cortex-M4 kernel with structured execution evidence:
+
+- A preemptive Earliest Deadline First (EDF) scheduler selects ready tasks.
+- A fixed priority resolves a tie between equal deadlines.
+- Tasks can start, yield, sleep, wake, return, and exit.
+- SVC starts task execution, SysTick updates time, and PendSV switches tasks.
+- Each task uses an aligned Process Stack Pointer (PSP) stack.
+- Exception handlers use the Main Stack Pointer (MSP).
+- A task-owned allocator supplies aligned memory and reports heap usage and
+  fragmentation.
+- A bounded binary trace records task, scheduler, deadline, idle, and memory
+  events.
+- Host tools validate the trace and create a standalone scheduling timeline.
+- A fixed-point FIR workload demonstrates useful Cortex-M4 DSP instructions.
+- Project-local, pinned tools make the build independent of an installed ARM
+  compiler or Python environment.
+
+The implementation stays small on purpose. A developer can follow the path
+from the public C API to the scheduler and then to the context-switch assembly.
 
 ## Quick start
 
-Use a Linux x86-64 host. Do not install a global Arm compiler or Renode.
-
-Install the pinned project tools:
-
-```sh
-make setup
-```
-
-Run the Deadline Lab:
+Use a Linux x86-64 computer with Git, GNU Make, curl, and a C compiler. Then
+run one command:
 
 ```sh
-make demo
+make quickstart
 ```
 
-Run the Signal Lab and create its comparison report:
+The first run obtains and checks the pinned ARM toolchain, STM32 sources,
+Renode, and Python environment. It then builds two NUCLEO-F401RE firmware
+images, runs them, checks their structured traces, and creates an HTML report.
 
-```sh
-make demo-dsp
-```
+Open the printed `runs/<run-id>/index.html` file in a browser. The report does
+not need a server or a network connection.
 
-Run the native and host checks:
+## What the demonstration does
 
-```sh
-make test
-```
+The firmware runs four application tasks and one idle task:
 
-`make setup` installs tools under `.tools/` and source dependencies under
-`.deps/`. The dependency lock records the source revisions and archive hashes.
+| Task | Purpose | Release pattern | Deadline | Normal work |
+| --- | --- | --- | ---: | ---: |
+| Sampler | Acquire a periodic input | Every 6 ticks | 3 ticks | 1 tick |
+| Controller | Process the input | Every 10 ticks | 8 ticks | 2 ticks |
+| Telemetry | Prepare status data | Every 18 ticks | 14 ticks | 1 tick |
+| Load | Apply controlled CPU demand | Once | 12 ticks | 1 tick |
+| Idle | Wait when no task is ready | As needed | None | As needed |
 
-## Verified
+The command runs the same workload in two modes. Normal mode gives the load
+task one work tick. Overload mode gives it eight work ticks. No other task
+configuration changes.
 
-The project verifies these functions:
+The deterministic result is:
 
-- The build creates a Cortex-M4 soft-float ELF, binary, map, size report, and
-  build metadata for the NUCLEO-F401RE.
-- The firmware starts with the vendor vector table and linker memory map.
-- Kernel tasks use SVC, PendSV, the Process Stack Pointer (PSP), SysTick, and
-  EDF dispatch.
-- Task tests cover first dispatch, yield, preemption, sleep, wake, return,
-  deferred stack reclaim, and task-slot reuse.
-- Scheduler tests cover deadline order, priority ties, periodic release,
-  deadline misses, idle selection, and tick wraparound.
-- Allocator tests cover alignment, split, exact fit, coalescing, exhaustion,
-  invalid free, task ownership, and fragmentation statistics.
-- Schema-1 trace tests cover all event types, loss detection, bounds,
-  corruption, and exact deterministic event sequences.
-- The Deadline Lab creates normal and overload reports from two exact firmware
-  runs. The overload mode records a repeatable deadline miss.
-- The Signal Lab runs scalar and packed DSP firmware images. Both
-  implementations produce 452 outputs and pass the fixed output CRC-32
-  contract `0xAFC277C1`.
-- The Signal Lab records 7,232 executed single-lane `SMLALBB` instructions in
-  the scalar FIR body. It records 3,616 executed packed `SMLALD` instructions
-  and 452 `SSAT` instructions in the M4 FIR body.
+| Metric | Normal | Overload |
+| --- | ---: | ---: |
+| Released jobs | 8 | 8 |
+| Context switches | 13 | 11 |
+| Preemptions | 4 | 2 |
+| Idle ticks | 11 | 4 |
+| Deadline misses | 0 | 1 |
 
-The pinned Renode environment supplies functional emulator evidence. These
-checks do not prove physical timing or hard real-time behavior.
+In overload mode, the load task reaches its absolute deadline at tick 12
+before it completes. The timeline shows its release, each running interval,
+the sampler preemption, the EDF candidate data, and the first deadline miss.
+The host report uses events from the Cortex-M4 firmware. It does not create a
+replacement schedule.
 
-## Experimental
+## Useful Cortex-M4 computation
 
-These parts have a narrow, tested scope:
+The repository also contains an allocation-free, 16-tap Q15 finite impulse
+response (FIR) filter. Q15 represents a signed fraction in a 16-bit integer.
+This format is common when an embedded target must process sampled data without
+floating-point state.
 
-- The local Renode platform models the CPU, memory, NVIC, SysTick, USART2, and
-  the GPIO behavior that the current workloads need.
-- The allocator is an educational first-fit/next-fit heap for kernel tasks. It
-  is not a general C library allocator.
-- Allocation ownership is bookkeeping. It is not hardware memory protection.
-- Trace events change guest work. Use them to explain order and state, not
-  timing.
-- Signal Lab execution tracing is bounded and synchronous. It proves that the
-  selected instructions ran in each exact ELF.
+The workload processes four frames of 128 samples. It compares a scalar C
+implementation with a Cortex-M4 implementation that uses packed `SMLALD`
+multiply-accumulate instructions and `SSAT` saturation instructions. Both
+implementations produce 452 outputs with the same CRC-32 value,
+`0xAFC277C1`. The execution record confirms 7,232 scalar MAC instructions or
+3,616 packed dual-lane MAC instructions for the same 7,232 products.
 
-## Planned
+This gives the project a practical computation, a portable reference, and an
+inspectable architecture-specific implementation. The instruction report is
+functional evidence. Board measurement tools can use the same firmware hash
+when they add cycle and latency data.
 
-The next milestone can add a recorded physical-board run. It can compare
-hardware cycle counts with the current functional evidence.
+## How the kernel runs a task
 
-The project does not yet plan a shell, networking, a file system, USB,
-multiple architecture ports, symmetric multiprocessing, or POSIX support.
-These features do not support the current lab goals.
+ARM Cortex-M processors separate normal task execution from exception-handler
+execution. AymOS uses that separation as follows:
 
-## Hardware not validated
+1. Reset code prepares memory and calls `main()` on MSP.
+2. The application creates task control blocks and aligned task stacks.
+3. `osKernelStart()` requests an SVC exception. SVC restores the first task
+   frame and changes thread execution to PSP.
+4. SysTick advances the kernel tick. It releases periodic or sleeping tasks
+   when their wake tick arrives.
+5. EDF compares the absolute deadlines of all ready tasks. It records the
+   candidates and the selection reason.
+6. When another task must run, the kernel requests PendSV. PendSV saves the
+   current task registers and restores the next task registers.
+7. Processor exception return restores the hardware frame and resumes the
+   selected task on its own PSP stack.
+8. If a task function returns, a trampoline calls `osTaskExit()`. The kernel
+   reclaims the old stack only after execution has moved to another stack.
+9. The idle task executes when no application task is ready.
 
-The current campaign did not use a physical NUCLEO-F401RE board. `make flash`
-builds the image and then stops with this notice. It does not claim a hardware
-test.
+This path exercises the Cortex-M4 vector table, SVC, PendSV, SysTick, PSP,
+MSP, exception return, and the EDF scheduler in the board-targeted firmware.
 
-The project does not claim physical interrupt latency, execution time, WCET,
-or a hard real-time guarantee. Record a board, probe, clock setup, compiler,
-firmware hash, and measurement method before you make such a claim.
+## Evidence and quality checks
 
-## Kernel path
+Each completed run keeps the exact firmware ELF and linker map, build
+configuration, tool versions, command line, UART capture, binary trace,
+decoded events, summary metrics, HTML timeline, and emulator log. Metadata
+binds the result to its Git commit and records SHA-256 hashes for the artifacts.
 
-The kernel uses a small exception path:
+Automated checks cover:
 
-1. SVC starts the first task on PSP.
-2. SysTick advances the kernel tick and releases due tasks.
-3. EDF selects a ready task.
-4. PendSV saves and restores the software context.
-5. Exception return restores the hardware frame.
-6. A task trampoline sends a returned task to `osTaskExit()`.
-7. The idle task runs when no user task is ready.
+- firmware format, vector table, memory ranges, stack alignment, and soft-float
+  ABI;
+- task dispatch, yield, preemption, sleep, wake, return, exit, and stack
+  reclamation;
+- EDF order, priority ties, deadline accounting, periodic releases, idle
+  selection, and tick wraparound;
+- allocator alignment, invalid frees, coalescing, exhaustion, ownership, and
+  fragmentation statistics;
+- trace framing, event order, bounds, corruption, and overflow behavior; and
+- FIR correctness, scalar and packed equivalence, and Cortex-M4 instruction
+  selection.
 
-The firmware uses the Main Stack Pointer (MSP) for handlers. It uses PSP for
-tasks. Task stacks keep eight-byte alignment. The firmware uses the soft-float
-application binary interface. The kernel does not preserve a floating-point
-context.
+## Documentation
 
-## Labs
-
-### Deadline Lab
-
-Deadline Lab uses a sampler, controller, telemetry task, load task, and idle
-task. Normal mode meets all configured deadlines. Overload mode increases
-deterministic work and records the first miss.
-
-Run both modes:
-
-```sh
-make demo
-```
-
-The command creates a unique directory under `runs/`. Each mode stores its
-firmware, map, workload, metadata, UART data, trace, summary, log, and
-standalone HTML timeline. The tool retains a bounded number of complete runs.
-
-See [Deadline Lab details](docs/DEADLINE_LAB.md).
-
-### Signal Lab
-
-Signal Lab uses a sampler, processor, verifier, and idle task. The sampler
-creates four fixed 128-sample frames. The processor applies a 16-tap finite
-impulse response (FIR) filter. The verifier checks the result inside the
-firmware.
-
-Run and report both implementations:
-
-```sh
-make demo-dsp
-```
-
-Create a new report from existing validated evidence:
-
-```sh
-make report-dsp
-```
-
-The report copies and hashes the exact evidence before it publishes a complete
-run. It rejects an incomplete result, an unknown file, a changed byte count, a
-changed hash, a different result, or a different structured trace.
-
-The packed loop halves the multiply-accumulate (MAC) instruction count. It
-processes two signed Q15 products with each `SMLALD`. The first M4 function has
-more total executed FIR-body instruction records than the scalar function.
-This evidence does not establish a whole-function efficiency gain.
-
-See [Performance Lab details](docs/PERFORMANCE_LAB.md).
-
-## Common commands
-
-Build the boot image:
-
-```sh
-make firmware
-```
-
-Boot the image and print USART2 output:
-
-```sh
-make run
-```
-
-Run one boot test:
-
-```sh
-make test-emulator
-```
-
-Run all native C tests with sanitizers:
-
-```sh
-make test-native
-```
-
-Check the Cortex-M4 DSP object code:
-
-```sh
-make check-dsp-codegen
-```
-
-Run one Signal Lab firmware configuration:
-
-```sh
-make run-signal-lab SIGNAL_IMPL=m4
-```
-
-Run one Deadline Lab build configuration:
-
-```sh
-make deadline-lab WORKLOAD_MODE=overload
-```
-
-Run a repeated manual emulator gate when you need it:
-
-```sh
-RENODE_REPEAT=5 make test-edf
-```
-
-See [build instructions](docs/BUILDING.md) for all targets and artifact paths.
-
-## Repository layout
-
-```text
-apps/       Board-targeted lab applications
-arch/       Cortex-M4 context-switch assembly
-bsp/        NUCLEO-F401RE startup support, board code, and linker script
-dsp/        Allocation-free Q15 FIR code
-kernel/     Scheduler, task lifecycle, allocator, and structured trace
-platform/   Local Renode platform and launch scripts
-tests/      Native, host, and emulator checks
-tools/      Setup, validation, trace, and report tools
-docs/       Build, lab, design, and evidence documents
-```
-
-## Application selection
-
-The Makefile uses controlled source lists. Select an application with `APP`:
-
-```sh
-make APP=boot firmware
-make APP=lifecycle firmware
-make APP=edf firmware
-make APP=allocator firmware
-make APP=trace firmware
-make APP=deadline_lab WORKLOAD_MODE=normal firmware
-make APP=signal_lab SIGNAL_IMPL=scalar firmware
-```
-
-The canonical target is `BOARD=nucleo_f401re`.
-
-## Design documents
-
-- [Implementation plan](docs/IMPLEMENTATION_PLAN.md)
-- [Build and dependency guide](docs/BUILDING.md)
-- [Functionality overview](docs/FUNCTIONALITY_OVERVIEW.md)
-- [Trace format and schema](docs/TRACE_FORMAT.md)
-- [Deadline Lab](docs/DEADLINE_LAB.md)
-- [Performance Lab](docs/PERFORMANCE_LAB.md)
+- [Build, test, and command reference](docs/BUILDING.md)
+- [Scheduling demonstration](docs/SCHEDULING_DEMO.md)
+- [Fixed-point DSP workload](docs/DSP_WORKLOAD.md)
+- [Kernel functionality](docs/FUNCTIONALITY_OVERVIEW.md)
+- [Trace format](docs/TRACE_FORMAT.md)
+- [Implementation decisions](docs/IMPLEMENTATION_PLAN.md)
