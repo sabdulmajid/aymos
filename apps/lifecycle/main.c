@@ -24,20 +24,14 @@ static void task_b(void *argument);
 
 int main(void)
 {
-    static const os_task_config_t task_a_config = {
-        .entry = task_a,
-        .argument = (void *)(uintptr_t)TASK_A_ARGUMENT,
-        .stack_size = OS_MAX_STACK_SIZE,
-        .deadline_ticks = 10U,
-        .priority = 1U,
-    };
-    static const os_task_config_t task_b_config = {
-        .entry = task_b,
-        .argument = (void *)(uintptr_t)TASK_B_ARGUMENT,
-        .stack_size = OS_MAX_STACK_SIZE,
-        .deadline_ticks = 10U,
-        .priority = 2U,
-    };
+    os_task_config_t task_a_config =
+        os_task_config_default(task_a, (void *)(uintptr_t)TASK_A_ARGUMENT);
+    os_task_config_t task_b_config =
+        os_task_config_default(task_b, (void *)(uintptr_t)TASK_B_ARGUMENT);
+    task_a_config.timing.relative_deadline_ticks = 1000U;
+    task_a_config.timing.priority = 1U;
+    task_b_config.timing.relative_deadline_ticks = 1000U;
+    task_b_config.timing.priority = 2U;
 
     require(board_init() == HAL_OK, "BOARD_INIT");
     write_line("AYMOS READY\r\n");

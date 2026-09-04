@@ -17,6 +17,10 @@ case "${app}" in
         uart_validator="${script_dir}/verify_lifecycle_uart.py"
         default_virtual_duration="0.5"
         ;;
+    edf)
+        uart_validator="${script_dir}/verify_edf_uart.py"
+        default_virtual_duration="0.5"
+        ;;
     *)
         printf 'renode-run: unsupported AYMOS_APP: %s\n' "${app}" >&2
         exit 2

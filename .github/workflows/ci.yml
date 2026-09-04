@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   firmware-and-renode:
-    name: F401RE boot and kernel lifecycle
+    name: F401RE boot, lifecycle, and EDF
     runs-on: ubuntu-24.04
     timeout-minutes: 20
 
@@ -35,6 +35,11 @@ jobs:
           make lifecycle
           RENODE_REPEAT=3 make test-lifecycle
 
+      - name: Build and run three deterministic ARM EDF scenarios
+        run: |
+          make edf
+          RENODE_REPEAT=3 make test-edf
+
       - name: Retain firmware and emulator diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -45,4 +50,6 @@ jobs:
           path: |
             build/nucleo_f401re/boot/
             build/nucleo_f401re/lifecycle/
+            build/nucleo_f401re/edf/
+            build/native/
             build/renode/

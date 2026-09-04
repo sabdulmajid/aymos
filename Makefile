@@ -7,7 +7,7 @@ BOARD ?= nucleo_f401re
 APP ?= boot
 
 SUPPORTED_BOARDS := nucleo_f401re
-SUPPORTED_APPS := boot lifecycle
+SUPPORTED_APPS := boot lifecycle edf
 
 ifeq ($(filter $(BOARD),$(SUPPORTED_BOARDS)),)
 $(error Unsupported BOARD '$(BOARD)'; supported boards: $(SUPPORTED_BOARDS))
@@ -52,6 +52,7 @@ override RENODE_DIR := $(abspath .tools/renode-1.16.1-dotnet-x86_64)
 override RENODE := $(RENODE_DIR)/renode
 override PYTHON_ENV_DIR := $(abspath .tools/python-venv-renode-1.16.1)
 override PYTHON := $(PYTHON_ENV_DIR)/bin/python3
+override HOST_CC := cc
 
 CMSIS_CORE_DIR := .deps/stm32cube_f4_core/Drivers/CMSIS/Core/Include
 CMSIS_DEVICE_DIR := .deps/cmsis_device_f4
@@ -81,10 +82,20 @@ PROJECT_C_SOURCES := \
 	apps/lifecycle/main.c \
 	bsp/nucleo_f401re/src/kernel_interrupts.c \
 	kernel/src/kernel.c \
+	kernel/src/scheduler.c \
 	$(COMMON_PROJECT_C_SOURCES)
 PROJECT_ASM_SOURCES := \
 	arch/arm_cm4/context_switch.S \
 	apps/lifecycle/register_probe.S
+else ifeq ($(APP),edf)
+PROJECT_C_SOURCES := \
+	apps/edf/main.c \
+	bsp/nucleo_f401re/src/kernel_interrupts.c \
+	kernel/src/kernel.c \
+	kernel/src/scheduler.c \
+	$(COMMON_PROJECT_C_SOURCES)
+PROJECT_ASM_SOURCES := \
+	arch/arm_cm4/context_switch.S
 endif
 
 VENDOR_C_SOURCES := \
@@ -142,6 +153,25 @@ PROJECT_WARNINGS := \
 VENDOR_WARNINGS := -Wall -Wextra
 DEPENDENCY_FLAGS := -MMD -MP
 
+NATIVE_BUILD_DIR := build/native
+NATIVE_SCHEDULER_TEST := $(NATIVE_BUILD_DIR)/test_scheduler
+NATIVE_COMPILER_REPORT := $(NATIVE_BUILD_DIR)/compiler.txt
+NATIVE_TEST_SOURCES := kernel/src/scheduler.c tests/native/test_scheduler.c
+NATIVE_CFLAGS := \
+	-std=c11 \
+	-O1 \
+	-g3 \
+	-Wall \
+	-Wextra \
+	-Werror \
+	-Wconversion \
+	-Wshadow \
+	-Wstrict-prototypes \
+	-Wundef \
+	-fsanitize=address,undefined \
+	-fno-omit-frame-pointer \
+	-Ikernel/include
+
 LDFLAGS := \
 	$(ARCH_FLAGS) \
 	-nostartfiles \
@@ -153,8 +183,9 @@ LDFLAGS := \
 	-Wl,-Map,$(MAP) \
 	-Wl,--cref
 
-.PHONY: firmware lifecycle setup validate test run run-lifecycle \
-	test-emulator test-emulator-offline test-lifecycle \
+.PHONY: firmware lifecycle edf setup validate test test-native run \
+	run-lifecycle run-edf test-emulator test-emulator-offline test-lifecycle \
+	test-edf \
 	check-renode-platform clean clean-build clean-emulator flash disassembly \
 	help check-setup FORCE
 
@@ -169,16 +200,60 @@ check-setup:
 check-renode-platform:
 	@./tools/renode/check_platform.sh
 
-test: check-setup check-renode-platform
+test: test-native check-setup check-renode-platform
 	@env -u PYTHONHOME -u PYTHONPATH \
 		PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 \
 		$(PYTHON) -m unittest discover -s tests/renode -p 'test_*.py' -v
+
+test-native: $(NATIVE_TEST_SOURCES) kernel/include/aymos_scheduler.h \
+	kernel/include/aymos_edf_fixture.h FORCE
+	@mkdir -p "$(NATIVE_BUILD_DIR)"
+	@printf 'HOSTCC      %s\n' "$(NATIVE_SCHEDULER_TEST)"
+	@set -eu; \
+		host_cc="$$(command -v $(HOST_CC))"; \
+		host_cc_real="$$(readlink -f "$${host_cc}")"; \
+		test_tmp='$(NATIVE_SCHEDULER_TEST).tmp'; \
+		report_tmp='$(NATIVE_COMPILER_REPORT).tmp'; \
+		trap 'rm -f -- "$${test_tmp}" "$${report_tmp}"' EXIT; \
+		{ \
+			printf 'schema=1\n'; \
+			printf 'compiler_command=%s\n' '$(HOST_CC)'; \
+			printf 'compiler_path=%s\n' "$${host_cc}"; \
+			printf 'compiler_realpath=%s\n' "$${host_cc_real}"; \
+			printf 'compiler_sha256=%s\n' \
+				"$$(sha256sum "$${host_cc_real}" | awk '{print $$1}')"; \
+			printf 'flags=%s\n' '$(NATIVE_CFLAGS)'; \
+			printf '%s\n' 'compiler_version_begin'; \
+			"$${host_cc_real}" --version; \
+			printf '%s\n' 'compiler_version_end'; \
+			sha256sum $(NATIVE_TEST_SOURCES) \
+				kernel/include/aymos_scheduler.h \
+				kernel/include/aymos_edf_fixture.h; \
+		} > "$${report_tmp}"; \
+		"$${host_cc_real}" $(NATIVE_CFLAGS) $(NATIVE_TEST_SOURCES) \
+			-o "$${test_tmp}"; \
+		printf 'binary_sha256=%s\n' \
+			"$$(sha256sum "$${test_tmp}" | awk '{print $$1}')" \
+			>> "$${report_tmp}"; \
+		mv -- "$${test_tmp}" '$(NATIVE_SCHEDULER_TEST)'; \
+		mv -- "$${report_tmp}" '$(NATIVE_COMPILER_REPORT)'; \
+		trap - EXIT; \
+		ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+		UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+			'$(NATIVE_SCHEDULER_TEST)'; \
+		expected="$$(awk -F= '/^binary_sha256=/ {print $$2}' \
+			'$(NATIVE_COMPILER_REPORT)')"; \
+		actual="$$(sha256sum '$(NATIVE_SCHEDULER_TEST)' | awk '{print $$1}')"; \
+		test "$${actual}" = "$${expected}"
 
 run: firmware check-renode-platform
 	@AYMOS_APP="$(APP)" ./tools/renode/run.sh
 
 run-lifecycle:
 	@$(MAKE) --no-print-directory APP=lifecycle run
+
+run-edf:
+	@$(MAKE) --no-print-directory APP=edf run
 
 test-emulator: firmware check-renode-platform
 	@AYMOS_APP="$(APP)" ./tools/renode/test.sh
@@ -191,6 +266,12 @@ lifecycle:
 
 test-lifecycle:
 	@$(MAKE) --no-print-directory APP=lifecycle test-emulator
+
+edf:
+	@$(MAKE) --no-print-directory APP=edf firmware
+
+test-edf:
+	@$(MAKE) --no-print-directory APP=edf test-emulator
 
 $(PROJECT_OBJECTS) $(PROJECT_ASM_OBJECTS) $(VENDOR_C_OBJECTS) \
 	$(VENDOR_ASM_OBJECTS): | check-setup
@@ -281,16 +362,19 @@ help:
 		'make setup        Install and verify pinned project-local dependencies' \
 		'make firmware     Build and validate the F401RE boot firmware (default)' \
 		'make test         Run host tests for the Renode model and UART validator' \
+		'make test-native  Run the actual EDF policy under ASan and UBSan' \
 		'make run          Boot the exact F401RE ELF headlessly and print UART' \
 		'make run-lifecycle  Build/run the SVC/PendSV/PSP lifecycle scenario' \
+		'make run-edf      Build/run the deterministic two-task EDF scenario' \
 		'make test-emulator Run the bounded Renode/Robot UART boot test' \
 		'make test-emulator-offline  Repeat the test in a network namespace' \
 		'make test-lifecycle  Assert the ARM lifecycle scenario in Renode' \
+		'make test-edf     Assert the exact ARM EDF sequence in Renode' \
 		'make validate     Re-run ELF, map, ABI, and memory validation' \
 		'make disassembly  Generate an annotated disassembly' \
 		'make clean        Remove firmware and emulator build artifacts' \
 		'make flash        Build, then stop with the unvalidated hardware notice' \
 		'' \
-		'Selection: BOARD=nucleo_f401re APP=boot|lifecycle'
+		'Selection: BOARD=nucleo_f401re APP=boot|lifecycle|edf'
 
 -include $(DEPENDENCY_FILES)

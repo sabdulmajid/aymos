@@ -16,6 +16,7 @@ enum {
     OS_SVC_YIELD = 1U,
     OS_SVC_SLEEP = 2U,
     OS_SVC_EXIT = 3U,
+    OS_SVC_WAIT_NEXT_PERIOD = 4U,
     OS_PRIORITY_SVC = 0x80U,
     OS_PRIORITY_SYSTICK = 0xE0U,
     OS_PRIORITY_PENDSV = 0xF0U,
@@ -29,11 +30,6 @@ typedef struct {
     uint32_t *saved_psp;
     uint32_t *stack_low;
     uint32_t *stack_high;
-    uint32_t deadline_ticks;
-    uint32_t wake_tick;
-    os_task_id_t id;
-    os_task_state_t state;
-    uint8_t priority;
     bool stack_claimed;
 } os_tcb_t;
 
@@ -49,10 +45,11 @@ _Static_assert(_Alignof(os_stack_slot_t) >= 8U,
                "task stack slots must be eight-byte aligned");
 
 static os_tcb_t tasks[OS_TASK_COUNT];
+static os_sched_task_t schedules[OS_TASK_COUNT];
 static os_stack_slot_t stacks[OS_TASK_COUNT];
 static os_task_id_t current_task = OS_TASK_ID_INVALID;
 static os_task_id_t yield_excluded_task = OS_TASK_ID_INVALID;
-static volatile uint32_t ticks;
+static volatile uint64_t monotonic_ticks;
 static volatile uint32_t reclaim_counter;
 static volatile os_task_id_t last_reclaimed = OS_TASK_ID_INVALID;
 static bool initialized;
@@ -67,9 +64,6 @@ static void reset_task(os_task_id_t id);
 static void transition_task(os_task_id_t id, os_task_state_t expected,
                             os_task_state_t next, const char *reason);
 static uint32_t *build_initial_frame(os_task_id_t id);
-static os_task_id_t select_ready_task(os_task_id_t excluded);
-static bool tick_reached(uint32_t now, uint32_t target);
-static bool task_outranks(os_task_id_t candidate, os_task_id_t incumbent);
 static void request_pendsv(void);
 static void verify_state(const char *where);
 static uint8_t decode_svc(const uint32_t *frame, uint32_t exc_return);
@@ -90,8 +84,6 @@ int os_kernel_init(void)
 
     tasks[OS_TASK_ID_IDLE].entry = idle_entry;
     tasks[OS_TASK_ID_IDLE].argument = NULL;
-    tasks[OS_TASK_ID_IDLE].deadline_ticks = UINT32_MAX;
-    tasks[OS_TASK_ID_IDLE].priority = UINT8_MAX;
     transition_task(OS_TASK_ID_IDLE, OS_TASK_DORMANT, OS_TASK_READY,
                     "IDLE_READY");
     tasks[OS_TASK_ID_IDLE].stack_claimed = true;
@@ -101,7 +93,7 @@ int os_kernel_init(void)
         (OS_MAX_STACK_SIZE / sizeof(uint32_t));
     tasks[OS_TASK_ID_IDLE].saved_psp = build_initial_frame(OS_TASK_ID_IDLE);
 
-    ticks = 0U;
+    monotonic_ticks = 0U;
     reclaim_counter = 0U;
     last_reclaimed = OS_TASK_ID_INVALID;
     current_task = OS_TASK_ID_INVALID;
@@ -118,18 +110,37 @@ int os_kernel_init(void)
     return 1;
 }
 
+os_task_config_t os_task_config_default(os_task_entry_t entry, void *argument)
+{
+    const os_task_config_t config = {
+        .entry = entry,
+        .argument = argument,
+        .stack_size = OS_MAX_STACK_SIZE,
+        .timing = {
+            .kind = OS_TASK_ONE_SHOT,
+            .initial_release_delay_ticks = 0U,
+            .period_ticks = 0U,
+            .relative_deadline_ticks = 1U,
+            .execution_budget_ticks = 0U,
+            .priority = 128U,
+        },
+    };
+    return config;
+}
+
 int os_task_create(const os_task_config_t *config, os_task_id_t *created_id)
 {
     if (!initialized || running || config == NULL || created_id == NULL ||
         config->entry == NULL || config->stack_size < OS_MIN_STACK_SIZE ||
         config->stack_size > OS_MAX_STACK_SIZE ||
-        (config->stack_size & 7U) != 0U || config->deadline_ticks == 0U) {
+        (config->stack_size & 7U) != 0U ||
+        !os_sched_config_valid(&config->timing)) {
         return 0;
     }
 
     os_task_id_t id = OS_TASK_ID_INVALID;
     for (os_task_id_t candidate = 1U; candidate < OS_TASK_COUNT; ++candidate) {
-        if (tasks[candidate].state == OS_TASK_DORMANT &&
+        if (schedules[candidate].state == OS_TASK_DORMANT &&
             !tasks[candidate].stack_claimed) {
             id = candidate;
             break;
@@ -141,14 +152,15 @@ int os_task_create(const os_task_config_t *config, os_task_id_t *created_id)
 
     tasks[id].entry = config->entry;
     tasks[id].argument = config->argument;
-    tasks[id].deadline_ticks = config->deadline_ticks;
-    tasks[id].priority = config->priority;
     tasks[id].stack_claimed = true;
     tasks[id].stack_low = stacks[id].words;
     tasks[id].stack_high =
         stacks[id].words + (config->stack_size / sizeof(uint32_t));
     tasks[id].saved_psp = build_initial_frame(id);
-    transition_task(id, OS_TASK_DORMANT, OS_TASK_READY, "CREATE_READY");
+    if (!os_sched_task_configure(&schedules[id], &config->timing,
+                                 monotonic_ticks)) {
+        os_kernel_panic("CREATE_TIMING");
+    }
     *created_id = id;
 
     verify_state("CREATE");
@@ -186,6 +198,16 @@ int os_sleep(uint32_t sleep_ticks)
     return 1;
 }
 
+int os_wait_next_period(void)
+{
+    if (!running || current_task == OS_TASK_ID_INVALID ||
+        schedules[current_task].kind != OS_TASK_PERIODIC) {
+        return 0;
+    }
+    __asm volatile("svc #4" ::: "memory");
+    return 1;
+}
+
 void os_task_exit(void)
 {
     if (!running || current_task == OS_TASK_ID_INVALID ||
@@ -198,7 +220,16 @@ void os_task_exit(void)
 
 uint32_t os_tick_count(void)
 {
-    return ticks;
+    return (uint32_t)os_monotonic_tick_count();
+}
+
+uint64_t os_monotonic_tick_count(void)
+{
+    const uint32_t saved_primask = __get_PRIMASK();
+    __disable_irq();
+    const uint64_t now = monotonic_ticks;
+    __set_PRIMASK(saved_primask);
+    return now;
 }
 
 os_task_id_t os_current_task(void)
@@ -223,14 +254,32 @@ int os_task_info(os_task_id_t id, os_task_info_t *info)
     }
     const uint32_t saved_primask = __get_PRIMASK();
     __disable_irq();
-    if (tasks[id].state == OS_TASK_DORMANT) {
+    if (schedules[id].state == OS_TASK_DORMANT) {
         __set_PRIMASK(saved_primask);
         return 0;
     }
     info->id = id;
-    info->state = tasks[id].state;
-    info->deadline_ticks = tasks[id].deadline_ticks;
-    info->priority = tasks[id].priority;
+    info->state = schedules[id].state;
+    info->kind = schedules[id].kind;
+    info->release_order = schedules[id].release_order;
+    info->next_release_order = schedules[id].next_release_order;
+    info->wake_order = schedules[id].wake_order;
+    info->absolute_deadline_order = schedules[id].absolute_deadline_order;
+    info->release_tick = schedules[id].release_tick;
+    info->next_release_tick = schedules[id].next_release_tick;
+    info->wake_tick = schedules[id].wake_tick;
+    info->period_ticks = schedules[id].period_ticks;
+    info->relative_deadline_ticks = schedules[id].relative_deadline_ticks;
+    info->absolute_deadline_tick = schedules[id].absolute_deadline_tick;
+    info->execution_budget_ticks = schedules[id].execution_budget_ticks;
+    info->total_execution_ticks = schedules[id].total_execution_ticks;
+    info->job_execution_ticks = schedules[id].job_execution_ticks;
+    info->completed_job_count = schedules[id].completed_job_count;
+    info->deadline_miss_count = schedules[id].deadline_miss_count;
+    info->missed_release_count = schedules[id].missed_release_count;
+    info->job_sequence = schedules[id].job_sequence;
+    info->priority = schedules[id].priority;
+    info->job_active = schedules[id].job_active;
     __set_PRIMASK(saved_primask);
     return 1;
 }
@@ -272,7 +321,7 @@ void os_svc_dispatch(uint32_t *exception_frame, uint32_t exc_return)
     case OS_SVC_YIELD:
         if (exc_return != OS_EXC_RETURN_THREAD_PSP ||
             current_task == OS_TASK_ID_INVALID ||
-            tasks[current_task].state != OS_TASK_RUNNING) {
+            schedules[current_task].state != OS_TASK_RUNNING) {
             os_kernel_panic("SVC_YIELD");
         }
         transition_task(current_task, OS_TASK_RUNNING, OS_TASK_READY,
@@ -282,25 +331,39 @@ void os_svc_dispatch(uint32_t *exception_frame, uint32_t exc_return)
     case OS_SVC_SLEEP: {
         if (exc_return != OS_EXC_RETURN_THREAD_PSP ||
             current_task == OS_TASK_ID_INVALID ||
-            tasks[current_task].state != OS_TASK_RUNNING ||
+            schedules[current_task].state != OS_TASK_RUNNING ||
             exception_frame[0] == 0U ||
             exception_frame[0] > OS_MAX_SLEEP_TICKS) {
             os_kernel_panic("SVC_SLEEP");
         }
-        tasks[current_task].wake_tick = ticks + exception_frame[0];
-        transition_task(current_task, OS_TASK_RUNNING, OS_TASK_SLEEPING,
-                        "TASK_SLEEP");
+        if (!os_sched_sleep(&schedules[current_task], monotonic_ticks,
+                            exception_frame[0])) {
+            os_kernel_panic("TASK_SLEEP");
+        }
         break;
     }
     case OS_SVC_EXIT:
         if (exc_return != OS_EXC_RETURN_THREAD_PSP ||
             current_task == OS_TASK_ID_INVALID ||
             current_task == OS_TASK_ID_IDLE ||
-            tasks[current_task].state != OS_TASK_RUNNING) {
+            schedules[current_task].state != OS_TASK_RUNNING) {
             os_kernel_panic("SVC_EXIT");
+        }
+        if (!os_sched_complete_job(&schedules[current_task], monotonic_ticks)) {
+            os_kernel_panic("EXIT_COMPLETE");
         }
         transition_task(current_task, OS_TASK_RUNNING, OS_TASK_EXITING,
                         "TASK_EXIT");
+        break;
+    case OS_SVC_WAIT_NEXT_PERIOD:
+        if (exc_return != OS_EXC_RETURN_THREAD_PSP ||
+            current_task == OS_TASK_ID_INVALID ||
+            current_task == OS_TASK_ID_IDLE ||
+            schedules[current_task].state != OS_TASK_RUNNING ||
+            !os_sched_wait_next_period(&schedules[current_task],
+                                       monotonic_ticks)) {
+            os_kernel_panic("SVC_PERIOD");
+        }
         break;
     default:
         os_kernel_panic("SVC_NUMBER");
@@ -326,22 +389,23 @@ uint32_t *os_pendsv_switch(uint32_t *saved_psp)
     /* A direct preemption request can arrive while the outgoing task is still
        RUNNING. Commit that transition only here, with PendSV holding PRIMASK. */
     if (outgoing != OS_TASK_ID_INVALID &&
-        tasks[outgoing].state == OS_TASK_RUNNING) {
+        schedules[outgoing].state == OS_TASK_RUNNING) {
         transition_task(outgoing, OS_TASK_RUNNING, OS_TASK_READY,
                         "PEND_READY");
     }
 
     if (outgoing != OS_TASK_ID_INVALID &&
-        tasks[outgoing].state == OS_TASK_EXITING) {
+        schedules[outgoing].state == OS_TASK_EXITING) {
         reclaim_exiting_task(outgoing);
     }
 
-    os_task_id_t next = select_ready_task(yield_excluded_task);
+    os_task_id_t next =
+        os_sched_select(schedules, OS_TASK_COUNT, yield_excluded_task);
     yield_excluded_task = OS_TASK_ID_INVALID;
     if (next == OS_TASK_ID_INVALID) {
         next = OS_TASK_ID_IDLE;
     }
-    if (tasks[next].state != OS_TASK_READY ||
+    if (schedules[next].state != OS_TASK_READY ||
         !valid_saved_psp(next, tasks[next].saved_psp)) {
         os_kernel_panic("NEXT_TASK");
     }
@@ -355,26 +419,40 @@ uint32_t *os_pendsv_switch(uint32_t *saved_psp)
 
 void os_kernel_tick(void)
 {
-    ++ticks;
     if (!running) {
         return;
     }
+    if (monotonic_ticks == UINT64_MAX) {
+        os_kernel_panic("TICK_RANGE");
+    }
+    ++monotonic_ticks;
 
-    bool awakened = false;
+    bool made_ready = false;
     for (os_task_id_t id = 1U; id < OS_TASK_COUNT; ++id) {
-        if (tasks[id].state == OS_TASK_SLEEPING &&
-            tick_reached(ticks, tasks[id].wake_tick)) {
-            transition_task(id, OS_TASK_SLEEPING, OS_TASK_READY,
-                            "WAKE_READY");
-            awakened = true;
+        os_sched_account_running_tick(&schedules[id]);
+        (void)os_sched_record_deadline_miss(&schedules[id], monotonic_ticks);
+        (void)os_sched_record_active_release(&schedules[id], monotonic_ticks);
+        if (schedules[id].time_range_exhausted) {
+            os_kernel_panic("TASK_TIME_RANGE");
+        }
+        if (os_sched_release_due(&schedules[id], monotonic_ticks)) {
+            made_ready = true;
+        }
+        if (schedules[id].time_range_exhausted) {
+            os_kernel_panic("TASK_TIME_RANGE");
+        }
+        if (os_sched_wake_due(&schedules[id], monotonic_ticks)) {
+            made_ready = true;
         }
     }
 
-    if (awakened && current_task != OS_TASK_ID_INVALID &&
-        tasks[current_task].state == OS_TASK_RUNNING) {
-        const os_task_id_t candidate = select_ready_task(OS_TASK_ID_INVALID);
-        if (candidate != OS_TASK_ID_INVALID &&
-            task_outranks(candidate, current_task)) {
+    if (made_ready && current_task != OS_TASK_ID_INVALID &&
+        schedules[current_task].state == OS_TASK_RUNNING) {
+        const os_task_id_t candidate =
+            os_sched_select(schedules, OS_TASK_COUNT, OS_TASK_ID_INVALID);
+        if (candidate != OS_TASK_ID_INVALID && candidate != OS_TASK_ID_IDLE &&
+            os_sched_outranks(&schedules[candidate],
+                              &schedules[current_task])) {
             transition_task(current_task, OS_TASK_RUNNING, OS_TASK_READY,
                             "PREEMPT_READY");
             request_pendsv();
@@ -399,7 +477,7 @@ static void idle_entry(void *argument)
 static void task_entry_trampoline(void *argument)
 {
     if (current_task == OS_TASK_ID_INVALID ||
-        tasks[current_task].state != OS_TASK_RUNNING ||
+        schedules[current_task].state != OS_TASK_RUNNING ||
         tasks[current_task].entry == NULL || tasks[current_task].argument != argument) {
         os_kernel_panic("TRAMPOLINE");
     }
@@ -419,21 +497,17 @@ static void reset_task(os_task_id_t id)
     tasks[id].saved_psp = NULL;
     tasks[id].stack_low = NULL;
     tasks[id].stack_high = NULL;
-    tasks[id].deadline_ticks = 0U;
-    tasks[id].wake_tick = 0U;
-    tasks[id].id = id;
-    tasks[id].state = OS_TASK_DORMANT;
-    tasks[id].priority = 0U;
     tasks[id].stack_claimed = false;
+    os_sched_task_reset(&schedules[id], id);
 }
 
 static void transition_task(os_task_id_t id, os_task_state_t expected,
                             os_task_state_t next, const char *reason)
 {
-    if (id >= OS_TASK_COUNT || tasks[id].state != expected || expected == next) {
+    if (id >= OS_TASK_COUNT ||
+        !os_sched_transition(&schedules[id], expected, next)) {
         os_kernel_panic(reason);
     }
-    tasks[id].state = next;
 }
 
 static uint32_t *build_initial_frame(os_task_id_t id)
@@ -459,46 +533,6 @@ static uint32_t *build_initial_frame(os_task_id_t id)
     return frame;
 }
 
-static os_task_id_t select_ready_task(os_task_id_t excluded)
-{
-    os_task_id_t best = OS_TASK_ID_INVALID;
-    for (os_task_id_t id = 1U; id < OS_TASK_COUNT; ++id) {
-        if (id == excluded || tasks[id].state != OS_TASK_READY) {
-            continue;
-        }
-        if (best == OS_TASK_ID_INVALID || task_outranks(id, best)) {
-            best = id;
-        }
-    }
-    if (best == OS_TASK_ID_INVALID && excluded != OS_TASK_ID_INVALID &&
-        tasks[excluded].state == OS_TASK_READY) {
-        best = excluded;
-    }
-    return best;
-}
-
-static bool tick_reached(uint32_t now, uint32_t target)
-{
-    return (int32_t)(now - target) >= 0;
-}
-
-static bool task_outranks(os_task_id_t candidate, os_task_id_t incumbent)
-{
-    if (incumbent == OS_TASK_ID_INVALID || incumbent == OS_TASK_ID_IDLE) {
-        return candidate != OS_TASK_ID_IDLE;
-    }
-    if (candidate == OS_TASK_ID_IDLE) {
-        return false;
-    }
-    if (tasks[candidate].deadline_ticks != tasks[incumbent].deadline_ticks) {
-        return tasks[candidate].deadline_ticks < tasks[incumbent].deadline_ticks;
-    }
-    if (tasks[candidate].priority != tasks[incumbent].priority) {
-        return tasks[candidate].priority < tasks[incumbent].priority;
-    }
-    return candidate < incumbent;
-}
-
 static void request_pendsv(void)
 {
     SCB->ICSR = SCB_ICSR_PENDSVSET_Msk;
@@ -511,7 +545,7 @@ static void verify_state(const char *where)
     uint32_t running_count = 0U;
     os_task_id_t running_id = OS_TASK_ID_INVALID;
     for (os_task_id_t id = 0U; id < OS_TASK_COUNT; ++id) {
-        if (tasks[id].state == OS_TASK_RUNNING) {
+        if (schedules[id].state == OS_TASK_RUNNING) {
             ++running_count;
             running_id = id;
         }
@@ -589,7 +623,7 @@ static bool valid_svc_frame(const uint32_t *frame, uint32_t exc_return)
 static void reclaim_exiting_task(os_task_id_t id)
 {
     if (id == OS_TASK_ID_IDLE || id >= OS_TASK_COUNT ||
-        tasks[id].state != OS_TASK_EXITING || !tasks[id].stack_claimed) {
+        schedules[id].state != OS_TASK_EXITING || !tasks[id].stack_claimed) {
         os_kernel_panic("RECLAIM");
     }
     transition_task(id, OS_TASK_EXITING, OS_TASK_DORMANT, "RECLAIM_STATE");
