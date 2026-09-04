@@ -113,6 +113,24 @@ make firmware BOARD=nucleo_f401re APP=edf
 
 Its artifacts are under `build/nucleo_f401re/edf/`.
 
+The structured trace image adds only the trace workload/runtime to the same
+board kernel:
+
+```sh
+make trace
+make run-trace
+make test-trace
+```
+
+`make test-trace` defaults to three independent executions. Every attempt must
+first satisfy the exact 102-record workload oracle, including the coalesced
+runtime-create/SysTick request, its actual committed switch pair, three
+idle-to-user preemptions, task-slot reuse, task/deadline identities, footer
+tick, and terminal idle. Raw record bytes and canonical decoded JSON must then
+match the first attempt exactly. Build artifacts are under
+`build/nucleo_f401re/trace/`; capture attempts are under `build/renode/run/` or
+`build/renode/test/`.
+
 The Makefile invokes the compiler by its absolute project-local path. Project
 code uses `-Wall -Wextra -Werror` plus additional diagnostics. Vendor code uses
 visible `-Wall -Wextra` warnings without converting upstream warnings into
@@ -268,9 +286,70 @@ firmware nevertheless completes HAL initialization and both interrupt smokes.
 The model does not represent every F401RE peripheral or register.
 
 The CI workflow runs setup, firmware validation, host tests, and three fresh
-Renode boots plus three lifecycle and three EDF scenarios on Ubuntu 24.04, then
+Renode boots plus three lifecycle, EDF, allocator, and trace scenarios on Ubuntu 24.04, then
 retains build/emulator artifacts even on failure. PR 2's hosted boot workflow
 passed; each stacked PR must rerun its own hosted check.
+
+## Structured trace workflow
+
+`APP=trace` runs the real SVC/PendSV/PSP/SysTick kernel and produces a binary
+UART trace. It is not a host scheduler simulation. The finite workload covers
+runtime task creation and delayed releases, a coalesced runtime/SysTick
+preemption, voluntary yield, two sleeps and wakes, idle resumption, explicit
+allocation/free, met and missed deadlines, safe returns/reclamation, task-slot
+reuse, and terminal idle. The runtime-create edge directly calls
+`os_task_create` while PRIMASK is set, waits for SysTick to become pending, and
+then unmasks interrupts; it does not execute SVC while PRIMASK is set. The
+trace ring uses 8192 static
+SRAM bytes; the validated map therefore moves the AymOS heap start to
+`0x20003790` while preserving its `0x20017000` end and the separate MSP region.
+
+Each successful run retains:
+
+```text
+metadata.txt
+command.txt
+uart.bin
+uart.txt
+uart-validation.log
+trace.bin
+trace.json
+emulator.log
+```
+
+`uart.bin` is the untouched wire stream. `trace.bin` is concatenated raw
+32-byte record payloads, not UART framing. `trace.json` is the canonical strict
+decode. The general decoder validates the transport, schema, roles, payloads,
+selection explanations, and zero-loss footer; the Renode validator separately
+checks the exact `APP=trace` semantic schedule. Robot attempts additionally
+retain XML/HTML diagnostics and the test root retains reference binary/JSON
+copies for equivalence checks. The exact format is documented in
+[TRACE_FORMAT.md](TRACE_FORMAT.md).
+
+Decode a saved capture through the same locked, environment-sanitized entry
+point used by the documented workflow:
+
+```sh
+make decode-trace TRACE_INPUT=uart.bin TRACE_JSON=trace.json \
+  TRACE_BIN=trace.bin
+```
+
+The shared bounded reader used by this command and the Renode validator reads
+only stable regular files, checks their size before and after reading, and
+never requests more than the 1 MiB limit plus one byte. Emulator metadata
+records hashes of both the generic decoder and workload validator together
+with the wire schema parameters.
+
+For a network-isolated trace after setup:
+
+```sh
+make APP=trace test-emulator-offline
+```
+
+The trace adds event-recording and final UART costs and Renode is functional
+evidence only. These artifacts do not establish physical timing, interrupt
+latency, WCET, or hard-real-time guarantees. Physical NUCLEO-F401RE trace
+transport remains unverified.
 
 ## Cortex-M4 lifecycle workflow
 

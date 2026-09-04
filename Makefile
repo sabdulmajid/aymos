@@ -7,7 +7,7 @@ BOARD ?= nucleo_f401re
 APP ?= boot
 
 SUPPORTED_BOARDS := nucleo_f401re
-SUPPORTED_APPS := boot lifecycle edf allocator
+SUPPORTED_APPS := boot lifecycle edf allocator trace
 
 ifeq ($(filter $(BOARD),$(SUPPORTED_BOARDS)),)
 $(error Unsupported BOARD '$(BOARD)'; supported boards: $(SUPPORTED_BOARDS))
@@ -108,6 +108,19 @@ PROJECT_C_SOURCES := \
 	$(COMMON_PROJECT_C_SOURCES)
 PROJECT_ASM_SOURCES := \
 	arch/arm_cm4/context_switch.S
+else ifeq ($(APP),trace)
+PROJECT_C_SOURCES := \
+	apps/trace/main.c \
+	bsp/nucleo_f401re/src/kernel_interrupts.c \
+	kernel/src/allocator.c \
+	kernel/src/kernel.c \
+	kernel/src/scheduler.c \
+	kernel/src/trace.c \
+	kernel/src/trace_runtime.c \
+	$(COMMON_PROJECT_C_SOURCES)
+PROJECT_ASM_SOURCES := \
+	arch/arm_cm4/context_switch.S
+PROJECT_CPPFLAGS := -DAYMOS_TRACE_ENABLED=1
 endif
 
 VENDOR_C_SOURCES := \
@@ -174,6 +187,9 @@ NATIVE_ALLOCATOR_COMPILER_REPORT := $(NATIVE_BUILD_DIR)/compiler-allocator.txt
 NATIVE_ALLOCATOR_TEST_SOURCES := \
 	kernel/src/allocator.c \
 	tests/native/test_allocator.c
+NATIVE_TRACE_TEST := $(NATIVE_BUILD_DIR)/test_trace
+NATIVE_TRACE_COMPILER_REPORT := $(NATIVE_BUILD_DIR)/compiler-trace.txt
+NATIVE_TRACE_TEST_SOURCES := kernel/src/trace.c tests/native/test_trace.c
 NATIVE_CFLAGS := \
 	-std=c11 \
 	-O1 \
@@ -189,6 +205,10 @@ NATIVE_CFLAGS := \
 	-fno-omit-frame-pointer \
 	-Ikernel/include
 
+TRACE_INPUT ?= uart.bin
+TRACE_JSON ?= trace.json
+TRACE_BIN ?= trace.bin
+
 LDFLAGS := \
 	$(ARCH_FLAGS) \
 	-nostartfiles \
@@ -200,10 +220,11 @@ LDFLAGS := \
 	-Wl,-Map,$(MAP) \
 	-Wl,--cref
 
-.PHONY: firmware lifecycle edf allocator setup validate test test-native \
-	test-native-scheduler test-native-allocator run run-lifecycle run-edf \
-	run-allocator test-emulator test-emulator-offline test-lifecycle test-edf \
-	test-allocator \
+.PHONY: firmware lifecycle edf allocator trace setup validate test test-native \
+	test-native-scheduler test-native-allocator test-native-trace run run-lifecycle run-edf \
+	run-allocator run-trace test-emulator test-emulator-offline test-lifecycle test-edf \
+	test-allocator test-trace test-host-trace \
+	decode-trace \
 	check-renode-platform clean clean-build clean-emulator flash disassembly \
 	help check-setup FORCE
 
@@ -218,12 +239,24 @@ check-setup:
 check-renode-platform:
 	@./tools/renode/check_platform.sh
 
-test: test-native check-setup check-renode-platform
+test: test-native test-host-trace check-setup check-renode-platform
 	@env -u PYTHONHOME -u PYTHONPATH \
 		PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 \
 		$(PYTHON) -m unittest discover -s tests/renode -p 'test_*.py' -v
 
-test-native: test-native-scheduler test-native-allocator
+test-host-trace: check-setup
+	@env -u PYTHONHOME -u PYTHONPATH \
+		PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 \
+		$(PYTHON) -m unittest tests.host.test_trace_decoder \
+			tests.host.test_trace_workload -v
+
+decode-trace: check-setup
+	@env -u PYTHONHOME -u PYTHONPATH \
+		PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 \
+		$(PYTHON) -m tools.aymos_lab.trace "$(TRACE_INPUT)" \
+			--json "$(TRACE_JSON)" --trace-bin "$(TRACE_BIN)"
+
+test-native: test-native-scheduler test-native-allocator test-native-trace
 
 test-native-scheduler: $(NATIVE_TEST_SOURCES) kernel/include/aymos_scheduler.h \
 	kernel/include/aymos_edf_fixture.h FORCE
@@ -307,6 +340,45 @@ test-native-allocator: $(NATIVE_ALLOCATOR_TEST_SOURCES) \
 		actual="$$(sha256sum '$(NATIVE_ALLOCATOR_TEST)' | awk '{print $$1}')"; \
 		test "$${actual}" = "$${expected}"
 
+test-native-trace: $(NATIVE_TRACE_TEST_SOURCES) kernel/include/aymos_trace.h FORCE
+	@mkdir -p "$(NATIVE_BUILD_DIR)"
+	@printf 'HOSTCC      %s\n' "$(NATIVE_TRACE_TEST)"
+	@set -eu; \
+		host_cc="$$(command -v $(HOST_CC))"; \
+		host_cc_real="$$(readlink -f "$${host_cc}")"; \
+		test_tmp='$(NATIVE_TRACE_TEST).tmp'; \
+		report_tmp='$(NATIVE_TRACE_COMPILER_REPORT).tmp'; \
+		trap 'rm -f -- "$${test_tmp}" "$${report_tmp}"' EXIT; \
+		{ \
+			printf 'schema=1\n'; \
+			printf 'suite=trace\n'; \
+			printf 'compiler_command=%s\n' '$(HOST_CC)'; \
+			printf 'compiler_path=%s\n' "$${host_cc}"; \
+			printf 'compiler_realpath=%s\n' "$${host_cc_real}"; \
+			printf 'compiler_sha256=%s\n' \
+				"$$(sha256sum "$${host_cc_real}" | awk '{print $$1}')"; \
+			printf 'flags=%s\n' '$(NATIVE_CFLAGS)'; \
+			printf '%s\n' 'compiler_version_begin'; \
+			"$${host_cc_real}" --version; \
+			printf '%s\n' 'compiler_version_end'; \
+			sha256sum $(NATIVE_TRACE_TEST_SOURCES) kernel/include/aymos_trace.h; \
+		} > "$${report_tmp}"; \
+		"$${host_cc_real}" $(NATIVE_CFLAGS) $(NATIVE_TRACE_TEST_SOURCES) \
+			-o "$${test_tmp}"; \
+		printf 'binary_sha256=%s\n' \
+			"$$(sha256sum "$${test_tmp}" | awk '{print $$1}')" \
+			>> "$${report_tmp}"; \
+		mv -- "$${test_tmp}" '$(NATIVE_TRACE_TEST)'; \
+		mv -- "$${report_tmp}" '$(NATIVE_TRACE_COMPILER_REPORT)'; \
+		trap - EXIT; \
+		ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+		UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+			'$(NATIVE_TRACE_TEST)'; \
+		expected="$$(awk -F= '/^binary_sha256=/ {print $$2}' \
+			'$(NATIVE_TRACE_COMPILER_REPORT)')"; \
+		actual="$$(sha256sum '$(NATIVE_TRACE_TEST)' | awk '{print $$1}')"; \
+		test "$${actual}" = "$${expected}"
+
 run: firmware check-renode-platform
 	@AYMOS_APP="$(APP)" ./tools/renode/run.sh
 
@@ -318,6 +390,9 @@ run-edf:
 
 run-allocator:
 	@$(MAKE) --no-print-directory APP=allocator run
+
+run-trace:
+	@$(MAKE) --no-print-directory APP=trace run
 
 test-emulator: firmware check-renode-platform
 	@AYMOS_APP="$(APP)" ./tools/renode/test.sh
@@ -343,6 +418,13 @@ allocator:
 test-allocator:
 	@$(MAKE) --no-print-directory APP=allocator test-emulator
 
+trace:
+	@$(MAKE) --no-print-directory APP=trace firmware
+
+test-trace: trace
+	@RENODE_REPEAT="$${RENODE_REPEAT:-3}" AYMOS_APP=trace \
+		./tools/renode/test.sh
+
 $(PROJECT_OBJECTS) $(PROJECT_ASM_OBJECTS) $(VENDOR_C_OBJECTS) \
 	$(VENDOR_ASM_OBJECTS): | check-setup
 
@@ -350,6 +432,7 @@ $(PROJECT_OBJECTS): $(OBJ_DIR)/%.o: %.c
 	@mkdir -p "$(dir $@)"
 	@printf 'CC(project) %s\n' "$<"
 	@$(CC) $(COMMON_CPPFLAGS) $(COMMON_CFLAGS) $(PROJECT_WARNINGS) \
+		$(PROJECT_CPPFLAGS) \
 		$(DEPENDENCY_FLAGS) -c "$<" -o "$@"
 
 $(VENDOR_C_OBJECTS): $(OBJ_DIR)/%.o: %.c
@@ -401,6 +484,11 @@ $(BUILD_METADATA): FORCE $(ELF) tools/setup/dependencies.lock | check-setup
 		printf 'architecture_flags=%s\n' '$(ARCH_FLAGS)'; \
 		printf 'renode=%s\n' '1.16.1'; \
 		printf 'python=%s\n' '3.12.13'; \
+		printf 'trace_schema_version=%s\n' '$(if $(filter trace,$(APP)),1,disabled)'; \
+		printf 'trace_framing_version=%s\n' '$(if $(filter trace,$(APP)),1,disabled)'; \
+		printf 'trace_record_size=%s\n' '$(if $(filter trace,$(APP)),32,0)'; \
+		printf 'trace_footer_size=%s\n' '$(if $(filter trace,$(APP)),28,0)'; \
+		printf 'trace_ring_records=%s\n' '$(if $(filter trace,$(APP)),256,0)'; \
 		printf 'stm32cube_f4=%s\n' "$$(git -C .deps/stm32cube_f4_core rev-parse HEAD)"; \
 		printf 'cmsis_device_f4=%s\n' "$$(git -C $(CMSIS_DEVICE_DIR) rev-parse HEAD)"; \
 		printf 'stm32f4xx_hal=%s\n' "$$(git -C $(HAL_DIR) rev-parse HEAD)"; \
@@ -431,22 +519,25 @@ help:
 	@printf '%s\n' \
 		'make setup        Install and verify pinned project-local dependencies' \
 		'make firmware     Build and validate the F401RE boot firmware (default)' \
-		'make test         Run host tests for the Renode model and UART validator' \
-		'make test-native  Run the actual EDF policy under ASan and UBSan' \
+		'make test         Run native and host parser/platform tests' \
+		'make test-native  Run scheduler, allocator, and trace C under sanitizers' \
 		'make run          Boot the exact F401RE ELF headlessly and print UART' \
 		'make run-lifecycle  Build/run the SVC/PendSV/PSP lifecycle scenario' \
 		'make run-edf      Build/run the deterministic two-task EDF scenario' \
 		'make run-allocator  Build/run repeated task-owned allocation scenario' \
+		'make run-trace    Build/run and decode the structured trace scenario' \
 		'make test-emulator Run the bounded Renode/Robot UART boot test' \
 		'make test-emulator-offline  Repeat the test in a network namespace' \
 		'make test-lifecycle  Assert the ARM lifecycle scenario in Renode' \
 		'make test-edf     Assert the exact ARM EDF sequence in Renode' \
 		'make test-allocator Assert allocator/task-slot reuse in Renode' \
+		'make test-trace   Assert and compare three exact ARM trace workloads' \
+		'make decode-trace TRACE_INPUT=uart.bin  Strictly decode a saved trace' \
 		'make validate     Re-run ELF, map, ABI, and memory validation' \
 		'make disassembly  Generate an annotated disassembly' \
 		'make clean        Remove firmware and emulator build artifacts' \
 		'make flash        Build, then stop with the unvalidated hardware notice' \
 		'' \
-		'Selection: BOARD=nucleo_f401re APP=boot|lifecycle|edf|allocator'
+		'Selection: BOARD=nucleo_f401re APP=boot|lifecycle|edf|allocator|trace'
 
 -include $(DEPENDENCY_FILES)

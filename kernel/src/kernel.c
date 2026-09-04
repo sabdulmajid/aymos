@@ -1,4 +1,5 @@
 #include "aymos_kernel.h"
+#include "aymos_trace_runtime.h"
 
 #include "board.h"
 #include "stm32f4xx.h"
@@ -20,6 +21,16 @@ enum {
     OS_PRIORITY_SVC = 0x80U,
     OS_PRIORITY_SYSTICK = 0xE0U,
     OS_PRIORITY_PENDSV = 0xF0U,
+    OS_SWITCH_START = 1U,
+    OS_SWITCH_YIELD = 2U,
+    OS_SWITCH_SLEEP = 3U,
+    OS_SWITCH_EXIT = 4U,
+    OS_SWITCH_WAIT_PERIOD = 5U,
+    OS_SWITCH_SYSTICK_PREEMPT = 6U,
+    OS_SWITCH_RUNTIME_CREATE = 7U,
+    OS_SWITCH_COALESCED_PREEMPT = 8U,
+    OS_PREEMPT_SOURCE_SYSTICK = 1U,
+    OS_PREEMPT_SOURCE_RUNTIME_CREATE = 2U,
     OS_FLASH_START = 0x08000000U,
     OS_FLASH_END = 0x08080000U
 };
@@ -31,6 +42,7 @@ typedef struct {
     uint32_t *stack_low;
     uint32_t *stack_high;
     bool stack_claimed;
+    bool started;
 } os_tcb_t;
 
 typedef struct {
@@ -49,6 +61,8 @@ static os_sched_task_t schedules[OS_TASK_COUNT];
 static os_stack_slot_t stacks[OS_TASK_COUNT];
 static os_task_id_t current_task = OS_TASK_ID_INVALID;
 static os_task_id_t yield_excluded_task = OS_TASK_ID_INVALID;
+static uint32_t pending_switch_cause;
+static uint32_t pending_preempt_sources;
 static volatile uint64_t monotonic_ticks;
 static volatile uint32_t reclaim_counter;
 static volatile os_task_id_t last_reclaimed = OS_TASK_ID_INVALID;
@@ -73,6 +87,10 @@ static bool valid_saved_psp(os_task_id_t id, const uint32_t *psp);
 static bool valid_svc_frame(const uint32_t *frame, uint32_t exc_return);
 static void reclaim_exiting_task(os_task_id_t id);
 static bool caller_is_running_task(void);
+static void trace_deadline(os_trace_event_t event, os_task_id_t id);
+static uint16_t trace_task(os_task_id_t id);
+static uint32_t trace_pointer_offset(const void *pointer);
+static void record_preemption_request(uint32_t source);
 
 int os_kernel_init(void)
 {
@@ -103,7 +121,10 @@ int os_kernel_init(void)
     last_reclaimed = OS_TASK_ID_INVALID;
     current_task = OS_TASK_ID_INVALID;
     yield_excluded_task = OS_TASK_ID_INVALID;
+    pending_switch_cause = 0U;
+    pending_preempt_sources = 0U;
     os_arch_has_active_context = 0U;
+    os_trace_runtime_init();
 
     const uintptr_t heap_begin = (uintptr_t)&__aymos_heap_start__;
     const uintptr_t heap_end = (uintptr_t)&__aymos_heap_end__;
@@ -189,8 +210,21 @@ int os_task_create(const os_task_config_t *config, os_task_id_t *created_id)
     tasks[id].saved_psp = build_initial_frame(id);
     *created_id = id;
 
+    const os_task_id_t creator = running ? current_task : OS_TASK_ID_INVALID;
+    (void)os_trace_emit(OS_TRACE_TASK_CREATE, id, trace_task(creator),
+                        (uint32_t)schedules[id].kind,
+                        schedules[id].priority,
+                        (uint32_t)schedules[id].state);
+    if (schedules[id].state == OS_TASK_READY) {
+        trace_deadline(OS_TRACE_TASK_RELEASE, id);
+    }
+
     if (running && schedules[id].state == OS_TASK_READY &&
         os_sched_outranks(&schedules[id], &schedules[current_task])) {
+        os_trace_emit_selection(schedules, OS_TASK_COUNT, id, current_task,
+                                OS_TASK_ID_INVALID,
+                                OS_TRACE_SELECT_RUNTIME_CREATE_PROBE);
+        record_preemption_request(OS_PREEMPT_SOURCE_RUNTIME_CREATE);
         request_pendsv();
     }
 
@@ -205,6 +239,9 @@ void os_kernel_start(void)
         os_kernel_panic("START_STATE");
     }
     running = true;
+    pending_switch_cause = OS_SWITCH_START;
+    (void)os_trace_emit(OS_TRACE_KERNEL_START, OS_TRACE_TASK_INVALID,
+                        OS_TRACE_TASK_INVALID, 0U, OS_TASK_COUNT, 0U);
     __asm volatile("svc #0" ::: "memory");
     os_kernel_panic("START_RETURN");
 }
@@ -328,6 +365,10 @@ void *os_memory_alloc(size_t size)
     if (caller_is_running_task() && current_task != OS_TASK_ID_IDLE) {
         result = os_allocator_alloc(&memory_allocator, size,
                                     (os_memory_owner_t)current_task);
+        (void)os_trace_emit(OS_TRACE_ALLOC, current_task,
+                            OS_TRACE_TASK_INVALID, (uint32_t)size,
+                            trace_pointer_offset(result),
+                            result != NULL ? 1U : 0U);
     }
     __set_PRIMASK(saved_primask);
     return result;
@@ -343,8 +384,12 @@ int os_memory_free(void *pointer)
     __disable_irq();
     bool result = false;
     if (caller_is_running_task() && current_task != OS_TASK_ID_IDLE) {
+        const uint32_t pointer_offset = trace_pointer_offset(pointer);
         result = os_allocator_free(&memory_allocator, pointer,
                                    (os_memory_owner_t)current_task);
+        (void)os_trace_emit(OS_TRACE_FREE, current_task,
+                            OS_TRACE_TASK_INVALID, pointer_offset, 1U,
+                            result ? 1U : 0U);
     }
     __set_PRIMASK(saved_primask);
     return result ? 1 : 0;
@@ -430,6 +475,9 @@ void os_svc_dispatch(uint32_t *exception_frame, uint32_t exc_return)
         transition_task(current_task, OS_TASK_RUNNING, OS_TASK_READY,
                         "YIELD_READY");
         yield_excluded_task = current_task;
+        pending_switch_cause = OS_SWITCH_YIELD;
+        (void)os_trace_emit(OS_TRACE_TASK_YIELD, current_task,
+                            OS_TRACE_TASK_INVALID, 0U, 0U, 0U);
         break;
     case OS_SVC_SLEEP: {
         if (exc_return != OS_EXC_RETURN_THREAD_PSP ||
@@ -443,29 +491,65 @@ void os_svc_dispatch(uint32_t *exception_frame, uint32_t exc_return)
                             exception_frame[0])) {
             os_kernel_panic("TASK_SLEEP");
         }
+        (void)os_trace_emit(
+            OS_TRACE_TASK_SLEEP, current_task, OS_TRACE_TASK_INVALID,
+            (uint32_t)schedules[current_task].wake_order,
+            (uint32_t)(schedules[current_task].wake_order >> 32U),
+            exception_frame[0]);
+        pending_switch_cause = OS_SWITCH_SLEEP;
         break;
     }
-    case OS_SVC_EXIT:
+    case OS_SVC_EXIT: {
         if (exc_return != OS_EXC_RETURN_THREAD_PSP ||
             current_task == OS_TASK_ID_INVALID ||
             current_task == OS_TASK_ID_IDLE ||
             schedules[current_task].state != OS_TASK_RUNNING) {
             os_kernel_panic("SVC_EXIT");
         }
+        const bool miss_before = schedules[current_task].deadline_miss_latched;
         if (!os_sched_complete_job(&schedules[current_task], monotonic_ticks)) {
             os_kernel_panic("EXIT_COMPLETE");
         }
+        if (!miss_before && schedules[current_task].deadline_miss_latched) {
+            trace_deadline(OS_TRACE_DEADLINE_MISS, current_task);
+        } else if (!schedules[current_task].deadline_miss_latched) {
+            trace_deadline(OS_TRACE_DEADLINE_MET, current_task);
+        }
         transition_task(current_task, OS_TASK_RUNNING, OS_TASK_EXITING,
                         "TASK_EXIT");
+        (void)os_trace_emit(OS_TRACE_TASK_EXIT, current_task,
+                            OS_TRACE_TASK_INVALID,
+                            schedules[current_task].completed_job_count,
+                            schedules[current_task].deadline_miss_count, 0U);
+        pending_switch_cause = OS_SWITCH_EXIT;
         break;
+    }
     case OS_SVC_WAIT_NEXT_PERIOD:
         if (exc_return != OS_EXC_RETURN_THREAD_PSP ||
             current_task == OS_TASK_ID_INVALID ||
             current_task == OS_TASK_ID_IDLE ||
-            schedules[current_task].state != OS_TASK_RUNNING ||
-            !os_sched_wait_next_period(&schedules[current_task],
-                                       monotonic_ticks)) {
+            schedules[current_task].state != OS_TASK_RUNNING) {
             os_kernel_panic("SVC_PERIOD");
+        }
+        {
+            const bool miss_before =
+                schedules[current_task].deadline_miss_latched;
+            if (!os_sched_wait_next_period(&schedules[current_task],
+                                           monotonic_ticks)) {
+                os_kernel_panic("SVC_PERIOD");
+            }
+            if (!miss_before && schedules[current_task].deadline_miss_latched) {
+                trace_deadline(OS_TRACE_DEADLINE_MISS, current_task);
+            } else if (!schedules[current_task].deadline_miss_latched) {
+                trace_deadline(OS_TRACE_DEADLINE_MET, current_task);
+            }
+            (void)os_trace_emit(
+                OS_TRACE_TASK_WAIT_PERIOD, current_task,
+                OS_TRACE_TASK_INVALID,
+                (uint32_t)schedules[current_task].next_release_order,
+                (uint32_t)(schedules[current_task].next_release_order >> 32U),
+                0U);
+            pending_switch_cause = OS_SWITCH_WAIT_PERIOD;
         }
         break;
     default:
@@ -478,6 +562,11 @@ void os_svc_dispatch(uint32_t *exception_frame, uint32_t exc_return)
 uint32_t *os_pendsv_switch(uint32_t *saved_psp)
 {
     const os_task_id_t outgoing = current_task;
+    const uint32_t preempt_sources = pending_preempt_sources;
+    os_task_state_t outgoing_state = OS_TASK_DORMANT;
+    if (outgoing != OS_TASK_ID_INVALID) {
+        outgoing_state = schedules[outgoing].state;
+    }
 
     if (os_arch_has_active_context != 0U) {
         if (outgoing == OS_TASK_ID_INVALID ||
@@ -502,8 +591,9 @@ uint32_t *os_pendsv_switch(uint32_t *saved_psp)
         reclaim_exiting_task(outgoing);
     }
 
+    const os_task_id_t excluded = yield_excluded_task;
     os_task_id_t next =
-        os_sched_select(schedules, OS_TASK_COUNT, yield_excluded_task);
+        os_sched_select(schedules, OS_TASK_COUNT, excluded);
     yield_excluded_task = OS_TASK_ID_INVALID;
     if (next == OS_TASK_ID_INVALID) {
         next = OS_TASK_ID_IDLE;
@@ -513,9 +603,34 @@ uint32_t *os_pendsv_switch(uint32_t *saved_psp)
         os_kernel_panic("NEXT_TASK");
     }
 
+    os_trace_emit_selection(schedules, OS_TASK_COUNT, next, outgoing,
+                            excluded, OS_TRACE_SELECT_DISPATCH);
     transition_task(next, OS_TASK_READY, OS_TASK_RUNNING, "SELECT_RUNNING");
     current_task = next;
     os_arch_has_active_context = 1U;
+    if (outgoing == OS_TASK_ID_IDLE && next != OS_TASK_ID_IDLE) {
+        (void)os_trace_emit(OS_TRACE_IDLE_STOP, OS_TASK_ID_IDLE, next,
+                            0U, 0U, 0U);
+    }
+    if (next == OS_TASK_ID_IDLE && outgoing != OS_TASK_ID_IDLE) {
+        (void)os_trace_emit(OS_TRACE_IDLE_START, OS_TASK_ID_IDLE,
+                            trace_task(outgoing), 0U, 0U, 0U);
+    }
+    if (preempt_sources != 0U) {
+        if (outgoing == OS_TASK_ID_INVALID || outgoing == next) {
+            os_kernel_panic("PREEMPT_COMMIT");
+        }
+        (void)os_trace_emit(OS_TRACE_TASK_PREEMPT, outgoing, next,
+                            preempt_sources, 0U, 0U);
+    }
+    (void)os_trace_emit(OS_TRACE_CONTEXT_SWITCH, trace_task(outgoing), next,
+                        pending_switch_cause, (uint32_t)outgoing_state, 0U);
+    pending_switch_cause = 0U;
+    pending_preempt_sources = 0U;
+    if (next != OS_TASK_ID_IDLE && !tasks[next].started) {
+        tasks[next].started = true;
+        trace_deadline(OS_TRACE_TASK_START, next);
+    }
     verify_state("SWITCH");
     return tasks[next].saved_psp;
 }
@@ -533,19 +648,31 @@ void os_kernel_tick(void)
     bool made_ready = false;
     for (os_task_id_t id = 1U; id < OS_TASK_COUNT; ++id) {
         os_sched_account_running_tick(&schedules[id]);
-        (void)os_sched_record_deadline_miss(&schedules[id], monotonic_ticks);
-        (void)os_sched_record_active_release(&schedules[id], monotonic_ticks);
+        if (os_sched_record_deadline_miss(&schedules[id], monotonic_ticks)) {
+            trace_deadline(OS_TRACE_DEADLINE_MISS, id);
+        }
+        if (os_sched_record_active_release(&schedules[id], monotonic_ticks)) {
+            const uint64_t missed_release =
+                schedules[id].next_release_order - schedules[id].period_ticks;
+            (void)os_trace_emit(
+                OS_TRACE_TASK_RELEASE_SKIPPED, id, OS_TRACE_TASK_INVALID,
+                (uint32_t)missed_release,
+                (uint32_t)(missed_release >> 32U),
+                schedules[id].missed_release_count);
+        }
         if (schedules[id].time_range_exhausted) {
             os_kernel_panic("TASK_TIME_RANGE");
         }
         if (os_sched_release_due(&schedules[id], monotonic_ticks)) {
             made_ready = true;
+            trace_deadline(OS_TRACE_TASK_RELEASE, id);
         }
         if (schedules[id].time_range_exhausted) {
             os_kernel_panic("TASK_TIME_RANGE");
         }
         if (os_sched_wake_due(&schedules[id], monotonic_ticks)) {
             made_ready = true;
+            trace_deadline(OS_TRACE_TASK_WAKE, id);
         }
     }
 
@@ -556,6 +683,10 @@ void os_kernel_tick(void)
         if (candidate != OS_TASK_ID_INVALID && candidate != OS_TASK_ID_IDLE &&
             os_sched_outranks(&schedules[candidate],
                               &schedules[current_task])) {
+            os_trace_emit_selection(schedules, OS_TASK_COUNT, candidate,
+                                    current_task, OS_TASK_ID_INVALID,
+                                    OS_TRACE_SELECT_SYSTICK_PROBE);
+            record_preemption_request(OS_PREEMPT_SOURCE_SYSTICK);
             transition_task(current_task, OS_TASK_RUNNING, OS_TASK_READY,
                             "PREEMPT_READY");
             request_pendsv();
@@ -571,10 +702,17 @@ void os_kernel_panic(const char *reason)
 static void idle_entry(void *argument)
 {
     (void)argument;
+#if defined(AYMOS_TRACE_ENABLED)
+    for (;;) {
+        board_lifecycle_idle_hook();
+        __WFI();
+    }
+#else
     board_lifecycle_idle_hook();
     for (;;) {
         __WFI();
     }
+#endif
 }
 
 static void task_entry_trampoline(void *argument)
@@ -601,6 +739,7 @@ static void reset_task(os_task_id_t id)
     tasks[id].stack_low = NULL;
     tasks[id].stack_high = NULL;
     tasks[id].stack_claimed = false;
+    tasks[id].started = false;
     os_sched_task_reset(&schedules[id], id);
 }
 
@@ -732,8 +871,13 @@ static void reclaim_exiting_task(os_task_id_t id)
     if (!os_allocator_validate(&memory_allocator)) {
         os_kernel_panic("HEAP_RECLAIM");
     }
-    (void)os_allocator_release_owner(&memory_allocator,
-                                     (os_memory_owner_t)id);
+    const size_t released = os_allocator_release_owner(
+        &memory_allocator, (os_memory_owner_t)id);
+    if (released != 0U) {
+        (void)os_trace_emit(OS_TRACE_OWNER_RELEASE, id,
+                            OS_TRACE_TASK_INVALID, (uint32_t)released,
+                            (uint32_t)id, 1U);
+    }
     if (!os_allocator_validate(&memory_allocator)) {
         os_kernel_panic("HEAP_RELEASE");
     }
@@ -748,4 +892,55 @@ static bool caller_is_running_task(void)
     return running && current_task < OS_TASK_COUNT &&
            schedules[current_task].state == OS_TASK_RUNNING &&
            os_arch_has_active_context != 0U;
+}
+
+static void trace_deadline(os_trace_event_t event, os_task_id_t id)
+{
+    const uint64_t deadline = schedules[id].absolute_deadline_order;
+    (void)os_trace_emit(event, id, OS_TRACE_TASK_INVALID,
+                        (uint32_t)deadline, (uint32_t)(deadline >> 32U),
+                        schedules[id].job_sequence);
+}
+
+static uint16_t trace_task(os_task_id_t id)
+{
+    return id == OS_TASK_ID_INVALID ? OS_TRACE_TASK_INVALID : id;
+}
+
+static uint32_t trace_pointer_offset(const void *pointer)
+{
+    extern uint8_t __aymos_heap_end__;
+    extern uint8_t __aymos_heap_start__;
+    if (pointer == NULL) {
+        return UINT32_MAX;
+    }
+    const uintptr_t address = (uintptr_t)pointer;
+    const uintptr_t start = (uintptr_t)&__aymos_heap_start__;
+    const uintptr_t end = (uintptr_t)&__aymos_heap_end__;
+    if (address < start || address >= end) {
+        return UINT32_MAX;
+    }
+    return (uint32_t)(address - start);
+}
+
+static void record_preemption_request(uint32_t source)
+{
+    if (source != OS_PREEMPT_SOURCE_SYSTICK &&
+        source != OS_PREEMPT_SOURCE_RUNTIME_CREATE) {
+        os_kernel_panic("PREEMPT_SOURCE");
+    }
+    pending_preempt_sources |= source;
+    switch (pending_preempt_sources) {
+    case OS_PREEMPT_SOURCE_SYSTICK:
+        pending_switch_cause = OS_SWITCH_SYSTICK_PREEMPT;
+        break;
+    case OS_PREEMPT_SOURCE_RUNTIME_CREATE:
+        pending_switch_cause = OS_SWITCH_RUNTIME_CREATE;
+        break;
+    case OS_PREEMPT_SOURCE_SYSTICK | OS_PREEMPT_SOURCE_RUNTIME_CREATE:
+        pending_switch_cause = OS_SWITCH_COALESCED_PREEMPT;
+        break;
+    default:
+        os_kernel_panic("PREEMPT_MASK");
+    }
 }

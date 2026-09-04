@@ -13,6 +13,7 @@ RUNTIME_INPUTS = (
     REPOSITORY_ROOT / "tests" / "renode" / "lifecycle.robot",
     REPOSITORY_ROOT / "tests" / "renode" / "edf.robot",
     REPOSITORY_ROOT / "tests" / "renode" / "allocator.robot",
+    REPOSITORY_ROOT / "tests" / "renode" / "trace.robot",
 )
 
 

@@ -10,7 +10,7 @@ readonly python_venv="${repo_root}/.tools/python-venv-renode-1.16.1"
 readonly robot_suite="${AYMOS_ROBOT_SUITE:-tests/renode/boot.robot}"
 
 case "${robot_suite}" in
-    tests/renode/boot.robot|tests/renode/lifecycle.robot|tests/renode/edf.robot|tests/renode/allocator.robot) ;;
+    tests/renode/boot.robot|tests/renode/lifecycle.robot|tests/renode/edf.robot|tests/renode/allocator.robot|tests/renode/trace.robot) ;;
     *)
         printf 'renode-test: unsupported Robot suite: %s\n' \
             "${robot_suite}" >&2

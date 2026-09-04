@@ -2,9 +2,9 @@
 
 This document explains the main modules of AymOS and how they work together. It supplements the information in the README.
 
-> **Status:** `APP=lifecycle`, `APP=edf`, and `APP=allocator` link and test the
-> kernel below. The allocator core is also compiled unchanged into native
-> ASan/UBSan tests.
+> **Status:** `APP=lifecycle`, `APP=edf`, `APP=allocator`, and `APP=trace` link
+> and test the kernel below. Portable allocator, scheduler, and trace cores are
+> also compiled unchanged into native ASan/UBSan tests.
 
 ## Kernel
 
@@ -56,6 +56,29 @@ counts, a high-water mark, and saturating operation/error counts. Newlib cannot
 contend for the region because its linker interval is empty and `_sbrk` always
 fails. Ownership tags are bookkeeping, not hardware-enforced isolation.
 
+## Structured Trace
+
+`kernel/src/trace.c` implements a portable fixed-record ring. Firmware wrappers
+in `trace_runtime.c` preserve incoming PRIMASK and atomically record lifecycle,
+EDF selection, deadline, idle, and memory events. EDF selection is a bounded
+batch containing the READY mask and each relevant candidate's full deadline,
+priority, incumbent/excluded/eligible state, purpose, and comparator reason. A
+full ring preserves earlier history and drops the complete new event/batch.
+
+The finite `APP=trace` workload executes on Cortex-M4 through the existing SVC,
+PendSV, PSP, and SysTick paths. At final idle it closes producers in one
+critical section, drains committed records in thread mode, CRC-frames them over
+USART2, and sends an authoritative footer. No trace producer formats output,
+allocates, or transmits UART. `tools/aymos_lab/trace.py` strictly validates the
+wire and emits canonical JSON plus concatenated raw records. The Renode UART
+validator then asserts the exact 102-record workload schedule and footer before
+repeat-equivalence comparison. See
+[TRACE_FORMAT.md](TRACE_FORMAT.md).
+
+The 256-record ring consumes 8192 bytes of SRAM and tracing itself perturbs the
+workload. It explains scheduler ordering in Renode; it is not a physical timing
+measurement or a hard-real-time guarantee.
+
 ## Startup and HAL
 
 The active build uses the pinned CMSIS-device vendor
@@ -74,16 +97,18 @@ Several old, unselected programs under `src/tests` demonstrate early kernel expe
 
 These files are manual firmware experiments with separate `main` functions;
 they are not selected by the current build and are not an automated test suite.
-The current slice includes automated native scheduler and allocator tests plus
-Renode boot, lifecycle, deterministic EDF, and allocator/task-reuse tests. The
+The current slice includes automated native scheduler, allocator, and trace
+tests plus Renode boot, lifecycle, deterministic EDF, allocator/task-reuse, and
+structured-trace tests. The
 obsolete `k_mem` implementation and its three manual allocator programs were
 retired in PR 5 so the repository does not present two allocator contracts.
 
 ## Next Steps
 
 For the verified workflow, use `make setup`, `make firmware`, `make test`,
-`make test-emulator`, `make test-lifecycle`, `make test-edf`, and
-`make test-allocator`, then read
+`make test-emulator`, `make test-lifecycle`, `make test-edf`,
+`make test-allocator`, and `make test-trace`, then read
 `docs/BUILDING.md`. `make run-lifecycle` and `make run-edf` print exact
 guest-generated streams; `make run-allocator` prints the allocation stress
-contract.
+contract. `make run-trace` reports the decoded record count and retains raw
+UART, raw records, canonical JSON, and emulator diagnostics.
