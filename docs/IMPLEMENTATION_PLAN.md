@@ -866,10 +866,10 @@ allocation/free; four met deadlines; one miss; safe exit/reclaim; and terminal
 idle. The formal review corrections passed the 103-check native trace suite,
 all 23 host trace tests, a ten-run byte/JSON-equivalence gate, a
 network-isolated trace run, and all inherited native/host and three-run
-boot/lifecycle/EDF/allocator regressions. Independent re-review, hosted CI, and
-committed-state evidence remain publication gates. The 8192-byte ring reduces
-available dynamic heap and all traces remain functional/emulator evidence
-without timing claims.
+boot/lifecycle/EDF/allocator regressions. Independent re-review,
+committed-state evidence, and hosted CI passed before merge. The 8192-byte ring
+reduces available dynamic heap, and all traces remain functional emulator
+evidence without timing claims.
 
 ### PR 7: Deadline Lab workload and host timeline
 
