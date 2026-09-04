@@ -216,6 +216,13 @@ NATIVE_ALLOCATOR_TEST_SOURCES := \
 NATIVE_TRACE_TEST := $(NATIVE_BUILD_DIR)/test_trace
 NATIVE_TRACE_COMPILER_REPORT := $(NATIVE_BUILD_DIR)/compiler-trace.txt
 NATIVE_TRACE_TEST_SOURCES := kernel/src/trace.c tests/native/test_trace.c
+NATIVE_DSP_TEST := $(NATIVE_BUILD_DIR)/test_fir_q15
+NATIVE_DSP_COMPILER_REPORT := $(NATIVE_BUILD_DIR)/compiler-fir-q15.txt
+NATIVE_DSP_TEST_SOURCES := \
+	dsp/src/fir_q15_common.c \
+	dsp/src/fir_q15_scalar.c \
+	dsp/src/fir_q15_packed_portable.c \
+	tests/native/test_fir_q15.c
 NATIVE_CFLAGS := \
 	-std=c11 \
 	-O1 \
@@ -230,6 +237,46 @@ NATIVE_CFLAGS := \
 	-fsanitize=address,undefined \
 	-fno-omit-frame-pointer \
 	-Ikernel/include
+NATIVE_DSP_CFLAGS := \
+	-std=c11 \
+	-O2 \
+	-g3 \
+	-Wall \
+	-Wextra \
+	-Werror \
+	-Wconversion \
+	-Wmissing-prototypes \
+	-Wpointer-arith \
+	-Wshadow \
+	-Wstrict-prototypes \
+	-Wundef \
+	-fsanitize=address,undefined \
+	-fno-omit-frame-pointer \
+	-Idsp/include \
+	-Idsp/src
+
+DSP_CODEGEN_BUILD_DIR := build/dsp-codegen
+DSP_CODEGEN_COMMON_OBJECT := $(DSP_CODEGEN_BUILD_DIR)/fir_q15_common.o
+DSP_CODEGEN_M4_OBJECT := $(DSP_CODEGEN_BUILD_DIR)/fir_q15_m4.o
+DSP_CODEGEN_PACKED_OBJECT := $(DSP_CODEGEN_BUILD_DIR)/fir_q15_packed_portable.o
+DSP_CODEGEN_SCALAR_OBJECT := $(DSP_CODEGEN_BUILD_DIR)/fir_q15_scalar.o
+DSP_CODEGEN_CONFIG := $(DSP_CODEGEN_BUILD_DIR)/build-config.txt
+DSP_CODEGEN_REPORT := $(DSP_CODEGEN_BUILD_DIR)/codegen-report.json
+DSP_ARM_CFLAGS := \
+	$(ARCH_FLAGS) \
+	-std=c11 \
+	-ffreestanding \
+	-ffunction-sections \
+	-fdata-sections \
+	-fno-builtin \
+	-fno-common \
+	-fno-strict-aliasing \
+	-O2 \
+	$(PROJECT_WARNINGS) \
+	-Wconversion \
+	-Idsp/include \
+	-Idsp/src \
+	-isystem $(CMSIS_CORE_DIR)
 
 TRACE_INPUT ?= uart.bin
 TRACE_JSON ?= trace.json
@@ -247,7 +294,8 @@ LDFLAGS := \
 	-Wl,--cref
 
 .PHONY: firmware lifecycle edf allocator trace deadline-lab demo setup validate test test-native \
-	test-native-scheduler test-native-allocator test-native-trace run run-lifecycle run-edf \
+	test-native-scheduler test-native-allocator test-native-trace test-native-dsp \
+	check-dsp-codegen check-dsp-codegen-internal run run-lifecycle run-edf \
 	run-allocator run-trace test-emulator test-emulator-offline test-lifecycle test-edf \
 	test-allocator test-trace test-host-trace test-host-deadline-lab \
 	decode-trace \
@@ -288,7 +336,8 @@ decode-trace: check-setup
 		$(PYTHON) -m tools.aymos_lab.trace "$(TRACE_INPUT)" \
 			--json "$(TRACE_JSON)" --trace-bin "$(TRACE_BIN)"
 
-test-native: test-native-scheduler test-native-allocator test-native-trace
+test-native: test-native-scheduler test-native-allocator test-native-trace \
+	test-native-dsp
 
 test-native-scheduler: $(NATIVE_TEST_SOURCES) kernel/include/aymos_scheduler.h \
 	kernel/include/aymos_edf_fixture.h FORCE
@@ -410,6 +459,118 @@ test-native-trace: $(NATIVE_TRACE_TEST_SOURCES) kernel/include/aymos_trace.h FOR
 			'$(NATIVE_TRACE_COMPILER_REPORT)')"; \
 		actual="$$(sha256sum '$(NATIVE_TRACE_TEST)' | awk '{print $$1}')"; \
 		test "$${actual}" = "$${expected}"
+
+test-native-dsp: $(NATIVE_DSP_TEST_SOURCES) dsp/include/aymos_fir_q15.h \
+	dsp/src/fir_q15_internal.h FORCE
+	@mkdir -p "$(NATIVE_BUILD_DIR)"
+	@printf 'HOSTCC      %s\n' "$(NATIVE_DSP_TEST)"
+	@set -eu; \
+		host_cc="$$(command -v $(HOST_CC))"; \
+		host_cc_real="$$(readlink -f "$${host_cc}")"; \
+		test_tmp='$(NATIVE_DSP_TEST).tmp'; \
+		report_tmp='$(NATIVE_DSP_COMPILER_REPORT).tmp'; \
+		trap 'rm -f -- "$${test_tmp}" "$${report_tmp}"' EXIT; \
+		{ \
+			printf 'schema=1\n'; \
+			printf 'suite=fir-q15\n'; \
+			printf 'compiler_command=%s\n' '$(HOST_CC)'; \
+			printf 'compiler_path=%s\n' "$${host_cc}"; \
+			printf 'compiler_realpath=%s\n' "$${host_cc_real}"; \
+			printf 'compiler_sha256=%s\n' \
+				"$$(sha256sum "$${host_cc_real}" | awk '{print $$1}')"; \
+			printf 'flags=%s\n' '$(NATIVE_DSP_CFLAGS)'; \
+			printf '%s\n' 'compiler_version_begin'; \
+			"$${host_cc_real}" --version; \
+			printf '%s\n' 'compiler_version_end'; \
+			sha256sum $(NATIVE_DSP_TEST_SOURCES) \
+				dsp/include/aymos_fir_q15.h dsp/src/fir_q15_internal.h; \
+		} > "$${report_tmp}"; \
+		"$${host_cc_real}" $(NATIVE_DSP_CFLAGS) \
+			$(NATIVE_DSP_TEST_SOURCES) -o "$${test_tmp}"; \
+		printf 'binary_sha256=%s\n' \
+			"$$(sha256sum "$${test_tmp}" | awk '{print $$1}')" \
+			>> "$${report_tmp}"; \
+		mv -- "$${test_tmp}" '$(NATIVE_DSP_TEST)'; \
+		mv -- "$${report_tmp}" '$(NATIVE_DSP_COMPILER_REPORT)'; \
+		trap - EXIT; \
+		ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+		UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+			'$(NATIVE_DSP_TEST)'; \
+		expected="$$(awk -F= '/^binary_sha256=/ {print $$2}' \
+			'$(NATIVE_DSP_COMPILER_REPORT)')"; \
+		actual="$$(sha256sum '$(NATIVE_DSP_TEST)' | awk '{print $$1}')"; \
+		test "$${actual}" = "$${expected}"
+
+$(DSP_CODEGEN_CONFIG): Makefile tools/setup/dependencies.lock FORCE | check-setup
+	@mkdir -p "$(dir $@)"
+	@set -eu; \
+		rm -f -- '$(DSP_CODEGEN_REPORT)'; \
+		config_tmp='$@.tmp'; \
+		trap 'rm -f -- "$${config_tmp}"' EXIT; \
+		{ \
+			printf 'schema=1\n'; \
+			printf 'compiler=%s\n' '$(CC)'; \
+			printf 'compiler_version=%s\n' "$$($(CC) -dumpfullversion)"; \
+			printf 'compiler_sha256=%s\n' \
+				"$$(sha256sum '$(CC)' | awk '{print $$1}')"; \
+			printf 'flags=%s\n' '$(DSP_ARM_CFLAGS)'; \
+			printf 'dependency_lock_sha256=%s\n' \
+				"$$(sha256sum tools/setup/dependencies.lock | awk '{print $$1}')"; \
+			printf 'cmsis_compiler_sha256=%s\n' \
+				"$$(sha256sum '$(CMSIS_CORE_DIR)/cmsis_compiler.h' | \
+					awk '{print $$1}')"; \
+		} > "$${config_tmp}"; \
+		if test -f '$@' && cmp -s "$${config_tmp}" '$@'; then \
+			rm -f -- "$${config_tmp}"; \
+		else \
+			mv -- "$${config_tmp}" '$@'; \
+		fi; \
+		trap - EXIT
+
+$(DSP_CODEGEN_M4_OBJECT): dsp/src/fir_q15_m4.c \
+	dsp/src/fir_q15_internal.h dsp/include/aymos_fir_q15.h | check-setup
+$(DSP_CODEGEN_M4_OBJECT): $(DSP_CODEGEN_CONFIG)
+	@mkdir -p "$(dir $@)"
+	@printf 'CC(dsp-m4)  %s\n' "dsp/src/fir_q15_m4.c"
+	@$(CC) $(DSP_ARM_CFLAGS) -c "dsp/src/fir_q15_m4.c" -o "$@"
+
+$(DSP_CODEGEN_COMMON_OBJECT): dsp/src/fir_q15_common.c \
+	dsp/src/fir_q15_internal.h dsp/include/aymos_fir_q15.h | check-setup
+$(DSP_CODEGEN_COMMON_OBJECT): $(DSP_CODEGEN_CONFIG)
+	@mkdir -p "$(dir $@)"
+	@printf 'CC(dsp)     %s\n' "dsp/src/fir_q15_common.c"
+	@$(CC) $(DSP_ARM_CFLAGS) -c "dsp/src/fir_q15_common.c" -o "$@"
+
+$(DSP_CODEGEN_PACKED_OBJECT): dsp/src/fir_q15_packed_portable.c \
+	dsp/src/fir_q15_internal.h dsp/include/aymos_fir_q15.h | check-setup
+$(DSP_CODEGEN_PACKED_OBJECT): $(DSP_CODEGEN_CONFIG)
+	@mkdir -p "$(dir $@)"
+	@printf 'CC(dsp)     %s\n' "dsp/src/fir_q15_packed_portable.c"
+	@$(CC) $(DSP_ARM_CFLAGS) -c "dsp/src/fir_q15_packed_portable.c" -o "$@"
+
+$(DSP_CODEGEN_SCALAR_OBJECT): dsp/src/fir_q15_scalar.c \
+	dsp/src/fir_q15_internal.h dsp/include/aymos_fir_q15.h | check-setup
+$(DSP_CODEGEN_SCALAR_OBJECT): $(DSP_CODEGEN_CONFIG)
+	@mkdir -p "$(dir $@)"
+	@printf 'CC(dsp-ref) %s\n' "dsp/src/fir_q15_scalar.c"
+	@$(CC) $(DSP_ARM_CFLAGS) -c "dsp/src/fir_q15_scalar.c" -o "$@"
+
+check-dsp-codegen:
+	@rm -f -- "$(DSP_CODEGEN_REPORT)"
+	@$(MAKE) --no-print-directory check-dsp-codegen-internal
+
+check-dsp-codegen-internal: $(DSP_CODEGEN_COMMON_OBJECT) $(DSP_CODEGEN_M4_OBJECT) \
+	$(DSP_CODEGEN_PACKED_OBJECT) $(DSP_CODEGEN_SCALAR_OBJECT) \
+	tools/check_dsp_codegen.py | check-setup
+	@rm -f -- "$(DSP_CODEGEN_REPORT)"
+	@env -u PYTHONHOME -u PYTHONPATH \
+		PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 \
+		$(PYTHON) tools/check_dsp_codegen.py \
+			--objdump "$(OBJDUMP)" \
+			--build-config "$(DSP_CODEGEN_CONFIG)" \
+			--m4-object "$(DSP_CODEGEN_M4_OBJECT)" \
+			--scalar-object "$(DSP_CODEGEN_SCALAR_OBJECT)" \
+			--output "$(DSP_CODEGEN_REPORT)"
 
 run: firmware check-renode-platform
 	@AYMOS_APP="$(APP)" AYMOS_WORKLOAD_MODE="$(WORKLOAD_MODE)" \
@@ -567,7 +728,9 @@ help:
 		'make setup        Install and verify pinned project-local dependencies' \
 		'make firmware     Build and validate the F401RE boot firmware (default)' \
 		'make test         Run native and host parser/platform tests' \
-		'make test-native  Run scheduler, allocator, and trace C under sanitizers' \
+		'make test-native  Run scheduler, allocator, trace, and FIR C tests' \
+		'make test-native-dsp  Run Q15 FIR correctness tests under sanitizers' \
+		'make check-dsp-codegen  Check Cortex-M4 FIR instruction selection' \
 		'make run          Boot the exact F401RE ELF headlessly and print UART' \
 		'make run-lifecycle  Build/run the SVC/PendSV/PSP lifecycle scenario' \
 		'make run-edf      Build/run the deterministic two-task EDF scenario' \

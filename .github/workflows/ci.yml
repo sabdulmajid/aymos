@@ -27,6 +27,9 @@ jobs:
       - name: Run host tests
         run: make test
 
+      - name: Check Cortex-M4 DSP instruction selection
+        run: make check-dsp-codegen
+
       - name: Run three clean emulator boots
         run: RENODE_REPEAT=3 make test-emulator
 

@@ -37,6 +37,19 @@ These values come from one complete Renode run of each mode. Run `make demo`
 to regenerate them. See [Deadline Lab](docs/DEADLINE_LAB.md) for the workload,
 artifact contract, and measurement boundary.
 
+## DSP foundation (implemented, experimental)
+
+```sh
+make test-native-dsp
+make check-dsp-codegen
+```
+
+The native test checks the scalar and portable paired Q15 FIR functions. The
+object-code check requires `smlald` and `ssat` in the Cortex-M4 function. The
+M4 function is not part of a firmware workload yet. See
+[Cortex-M4 performance lab](docs/PERFORMANCE_LAB.md) for the exact numerical
+contract and evidence limits.
+
 The canonical target is the STM32F401RE on a NUCLEO-F401RE board:
 
 - ARM Cortex-M4 / Thumb-2;

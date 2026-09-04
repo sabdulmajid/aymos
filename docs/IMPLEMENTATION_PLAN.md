@@ -996,7 +996,7 @@ only after its own acceptance evidence exists.
 | Trace record/wire encoding | Resolved in PR 6 implementation: naturally aligned 32-byte schema-1 records; `AYMT` framing version 1; CRC32; 28-byte terminal footer; strict bounded decoder; raw records and canonical JSON artifacts. | Preserve schema tests and require a version change for incompatible layouts. |
 | Trace perturbation | Events change guest execution cost even without blocking output. Treat results as explanatory ordering, not timing proof. | Record overflow/loss and document in PR 6. |
 | Deterministic execution demand | Use deterministic guest work/release units; never host wall-clock loops. | Repeated semantic traces in PRs 4 and 7. |
-| Python/Plotly footprint | Plotly is acceptable only as a locked host dependency and standalone output; a smaller renderer remains possible. | PR 7 prototype and dependency review. |
+| Timeline renderer footprint | Resolved in PR 7: the report is dependency-free standalone HTML with inline SVG. | Preserve escaping and deterministic host report tests. |
 | Python bootstrap reproducibility | Install a pinned CPython 3.12 `python-build-standalone` archive locally, then use hash-locked virtual environments; no system-Python fallback. | Exact runtime asset/hash and clean offline-after-setup test in PR 2. |
 | Physical board behavior | No board is currently available in the stated environment. | Remains explicitly unverified until a recorded hardware run. |
 
@@ -1004,3 +1004,81 @@ When a gate fails, dependent work stops. The exact failure and artifacts are
 recorded, a focused investigation repairs the owning PR, affected tests rerun,
 and work resumes only after the gate passes. Host tooling must never hide or
 reinterpret a kernel failure to obtain a passing demonstration.
+
+## Cortex-M4 performance lab campaign
+
+This campaign adds one useful DSP path. It keeps the existing kernel and
+real-time lab stable. Each pull request has a separate evidence gate.
+
+### Performance PR 1: deterministic Q15 FIR base
+
+Status: implemented; review findings resolved; independent re-review approved.
+
+- Add allocation-free scalar, portable paired, and Cortex-M4 paired FIR code.
+- Define one exact numerical contract for 1 through 64 taps.
+- Test invalid input, coefficient order, truncation, saturation, odd taps, and
+  deterministic equivalence under native sanitizers.
+- Inspect the optimized Cortex-M4 function and require `smlald` and `ssat`.
+- Keep the kernel, scheduler, trace, and applications unchanged.
+
+Acceptance gate:
+
+```sh
+make test-native-dsp
+make check-dsp-codegen
+```
+
+The object-code report is static evidence. It does not make a hardware timing
+claim.
+
+First review found two implementation issues. The ARM objects did not depend on
+their build configuration, and a failed check could leave an old passing
+report. A content-stable configuration stamp now records the compiler, flags,
+dependency lock, and CMSIS header. Every ARM DSP object depends on this stamp.
+The check removes an old report before validation and replaces a new report
+atomically. A mutation check confirms that a configuration change rebuilds the
+objects and that a forced checker failure leaves no report.
+
+Re-review found that an object compilation error occurs before the checker
+recipe. The public check target now has no prerequisites. It removes the prior
+report before it invokes a private target for setup, configuration, object
+compilation, and validation. An invalid compiler-flag check confirms that a
+compilation failure leaves no passing JSON artifact.
+
+Review also found an implementation-defined unsigned-to-signed conversion in
+the native corpus. The test now converts explicit two's-complement bits with
+only representable signed casts. Documentation now states that PR 1 executes
+only the scalar and portable paired functions. PR 2 owns M4 result equivalence.
+
+### Performance PR 2: board-targeted DSP workload
+
+Status: planned. It depends on Performance PR 1.
+
+- Add a small deterministic signal-processing workload to the existing lab.
+- Build separate scalar and Cortex-M4 DSP configurations from controlled source
+  lists.
+- Run the exact board-targeted firmware through the existing headless workflow.
+- Emit input identity, output checksum, work units, and selected implementation.
+- Prove numerical equality and show the work in a bounded report.
+
+This pull request will not use a host scheduler or a host FIR result as a
+substitute for firmware execution. It must stop if the firmware results differ.
+
+### Performance PR 3: comparison report and project presentation
+
+Status: planned. It depends on Performance PR 2.
+
+- Generate one standalone scalar-versus-DSP comparison report.
+- Keep each run in a bounded layout with firmware, configuration, trace,
+  checksum, code-generation evidence, and tool metadata.
+- Add one representative SVG and JSON result to the README.
+- Modernize CI for the focused native, object-code, and firmware Signal Lab
+  gates. Do not add repeated long runs.
+- Rewrite the README in ASD-STE100-style direct English. Separate verified,
+  experimental, planned, and hardware-only behavior.
+
+The report will explain numerical results and observed firmware scheduling. It
+will not turn emulator ordering into a hardware timing claim. DWT cycle counts
+and physical-board measurement move to a later milestone. GPU support,
+hard-float context switching, and a general benchmark framework remain deferred
+because they do not improve this DSP slice.
